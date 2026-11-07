@@ -21,7 +21,9 @@ The Phase 1 classical pipeline processes **raw whitespace text**:
 - The whole model is one sklearn `Pipeline`, so training-time and inference-time preprocessing
   cannot drift by construction. [VERIFIED FACT]
 - Labels: canonical space `negative=0, neutral=1, positive=2`; raw UIT-VSFC integers
-  (`0=positive, 1=negative, 2=neutral`) are remapped once at load time. [VERIFIED FACT]
+  (assumed `0=positive, 1=negative, 2=neutral` per the SEACrowd declaration — **UNRESOLVED**,
+  see [label-semantics-evidence.md](label-semantics-evidence.md)) are remapped once at load
+  time. [VERIFIED FACT for the load-time remap]
 
 So Phase 1 "tokenization" = whitespace/punctuation n-gram splitting on NFC-normalized raw text —
 **no word segmentation anywhere in Phase 1**.
@@ -133,7 +135,7 @@ Design points:
 |------|-------------|------------|
 | Segmentation error propagation | Wrong joins (e.g., "không tốt" -> "không_tốt") change token semantics and cannot be fixed downstream; errors hit the same words BPE was trained on | Use the segmenter PhoBERT was trained with (RDRsegmenter); spot-check a fixed sample of segmented sentences in CI with synthetic fixtures; report segmentation agreement between tools on a small audit set |
 | Train/serve skew | Different segmenter (or version) at inference than at training -> silent quality drop; the model has no way to warn | Record tool name, version, and model fingerprint in artifact metadata; a prediction run loads/validates that record; a CI test asserts identical segmentation on golden sentences across the recorded version |
-| Max-length truncation | PhoBERT caps at 256 subword tokens [VERIFIED FACT]; long multi-sentence feedback gets truncated — sentiment cues near the end are lost | Measure the token-length distribution of the real train split before finalizing (truncation side: `longest_first` default); if a meaningful tail exceeds 256, document it as a known limitation rather than silently truncating [ASSUMPTION: UIT-VSFC feedback is mostly short — ESTIMATE, unverified] |
+| Max-length truncation | PhoBERT caps at 256 subword tokens [VERIFIED FACT]; long multi-sentence feedback gets truncated — sentiment cues near the end are lost | Measure the token-length distribution of the real train split before finalizing (truncation side: right, pre-declared in `pilot-experiment-plan.md` §3.4); if a meaningful tail exceeds 256, document it as a known limitation rather than silently truncating [ASSUMPTION: UIT-VSFC feedback is mostly short — ESTIMATE, unverified] |
 | Segmenter output format mistakes | `underthesea.word_tokenize` defaults to a **list**; feeding a list's `str()` representation into the tokenizer corrupts text | Contract: underscore-joined string only — use `format="text"` (underthesea) or `rdrsegmenter.word_segment` (py_vncorenlp); unit-test the exact join behavior |
 | Non-lexical content (URLs, emojis, teencode) | Segmenters may split or mangle URLs/emojis; teencode/spelling variants are a Vietnamese feedback reality | Do not strip anything in preprocessing (Phase 1 principle); let BPE handle it; include representative fixtures in tests; error analysis on validation |
 | Java dependency | `py_vncorenlp` needs Java 1.8+; missing JVM = hard failure at train or predict time | Pin in project docs; check availability early in the Phase 2 environment bootstrap; the underthesea path is the documented fallback |

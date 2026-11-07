@@ -71,6 +71,12 @@ the family's MIT licensing; the large model's own card was not fetched directly 
 - Hub/format notes: the repo ships `pytorch_model.bin`, `tf_model.h5`, `flax_model.msgpack` and
   has **no safetensors file** (HF API). [VERIFIED FACT] Loading under recent `transformers` works
   from the bin weights, but `safe_serialization`-only tooling would need a conversion. [ASSUMPTION]
+  **Security caution:** a `pytorch_model.bin` is a pickle payload — loading it executes arbitrary
+  code if the file is tampered with or attacker-supplied (risk R-01 in
+  [risk-register.md](risk-register.md)). Phase 2 therefore requires the **safetensors format**:
+  convert once with the official safetensors converter, pin the repo id and revision SHA, record
+  the SHA256 of every downloaded file in provenance, and pin `torch>=2.6` so `weights_only=True`
+  is the load default. [VERIFIED FACT for the pickle risk and the mitigations, per risk-register.md R-01]
 - Known limitations: external segmentation dependency (Java, latency, error propagation — see
   tokenization-design.md); 256-token ceiling; current card is thin (most operational facts must be
   cited from the paper or the v2 card).

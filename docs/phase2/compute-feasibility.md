@@ -116,7 +116,7 @@ Privacy note: the Vietnamese feedback corpus is user-generated content; uploadin
 1. Run Phase 2 on this laptop: the measured RTX 3060 Laptop 6 GiB + 32 GiB RAM + 6C/12T CPU comfortably covers TF-IDF work and is adequate `[ESTIMATE]` for PhoBERT-base 3-class fine-tuning at ~11k sentences with AMP, batch 8-16, and gradient accumulation to reach an effective batch of 32.
 2. Defer cloud/VM options until a concrete trigger appears: a sweep that exceeds ~1 day of local GPU time, a model that cannot fit in 6 GiB even with checkpointing, or a requirement for guaranteed reproducibility beyond one machine.
 3. Prerequisite before any training (not authorized yet): create a project venv, install a CUDA 12.x torch build plus transformers, and re-run the hardware probe to confirm torch sees the GPU (`torch.cuda.is_available()`), which this readiness pass deliberately did not install or verify.
-4. Keep inference workloads on the local GPU too — batch inference for the full corpus is minutes, so there is no compute reason to move it.
+4. Keep inference workloads on the local GPU too — batch inference for the full corpus is minutes `[ESTIMATE]`, so there is no compute reason to move it.
 
 ## 6. Risks / open items
 

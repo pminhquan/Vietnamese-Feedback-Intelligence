@@ -5,7 +5,12 @@ license is still blocked (see `docs/dataset-uit-vsfc.md` on the Phase 1
 branch). No dataset file, no fine-tuning run, and no metric value exists
 behind this document. Every runtime figure is labeled `[ESTIMATE]` with its
 reasoning. Written 2026-11-07 against Phase 1 commit `95f7687` and main
-`caddb4a`.
+`caddb4a`. Updated the same day (hardening pass): the work is organized into
+milestones — **M1 is the three-model pilot** defined in
+[pilot-experiment-plan.md](pilot-experiment-plan.md) (majority +
+TF-IDF+LogReg + one fixed-recipe PhoBERT fine-tune, seed 42, no search);
+everything else in this blueprint is M2+ escalation, pre-designed but not
+pilot scope.
 
 ## 1. Research question
 
@@ -27,17 +32,26 @@ Secondary questions, answered only if compute allows:
 
 | ID | Model | Family | Status in Phase 2 |
 | -- | ----- | ------ | ----------------- |
-| `majority` | Majority-class classifier (Phase 1, canonical-label tie-break) | Classical | Mandatory control floor |
-| `tfidf-logreg` | TF-IDF + Logistic Regression, Phase 1 4-candidate search on validation (word 1-2 / char_wb 2-5 × C 1.0/4.0) | Classical | Mandatory strong baseline; re-run on real data under the Phase 1 protocol |
-| `phobert-base-ft` | PhoBERT-base (~135M params) full fine-tune, classification head on `[CLS]` | Deep, pretrained | Primary Phase 2 model |
-| `phobert-base-frozen` | PhoBERT-base frozen encoder + logistic regression head on `[CLS]` embeddings | Deep, frozen | Fallback only: used if full fine-tuning is compute-infeasible, or as a reported secondary variant |
-| `second-pretrained` | One additional pretrained baseline — candidate order: XLM-R-base (multilingual, raw-syllable input), then PhoBERT-large | Deep, pretrained | **OPTIONAL**, only if the Phase 2 budget is not consumed by the mandatory cells; decision rule in `experiment-matrix.md` |
+| `majority` | Majority-class classifier (Phase 1, canonical-label tie-break) | Classical | **M1 (pilot)** — mandatory control floor |
+| `tfidf-logreg` | TF-IDF + Logistic Regression, Phase 1 4-candidate search on validation (word 1-2 / char_wb 2-5 × C 1.0/4.0) | Classical | **M1 (pilot)** — mandatory strong baseline; re-run on real data under the Phase 1 protocol |
+| `phobert-base-ft` | PhoBERT-base (~135M params) full fine-tune, classification head on `[CLS]`, one fixed pre-declared recipe in M1 (no search) | Deep, pretrained | **M1 (pilot)** — primary Phase 2 model |
+| `phobert-base-frozen` | PhoBERT-base frozen encoder + logistic regression head on `[CLS]` embeddings | Deep, frozen | Fallback only: used if full fine-tuning is compute-infeasible, or as a reported secondary variant (M2+) |
+| `second-pretrained` | One additional pretrained baseline — candidate order: XLM-R-base (multilingual, raw-syllable input), then PhoBERT-large | Deep, pretrained | **OPTIONAL** (M2+), only if the Phase 2 budget is not consumed by the mandatory cells; decision rule in `experiment-matrix.md` |
 
 Notes:
 
 - `phobert-base-frozen` is a **different model**, never conflated with
   `phobert-base-ft`. Its headline claim, if any, is about deployment cost,
   not quality parity.
+- **XLM-R is not mandatory for M1.** The pilot's question is directional
+  ("does one fine-tuned Vietnamese pretrained model beat the strong
+  classical baseline under this protocol?") and one deep model answers it;
+  on the 6 GB GPU runs are serial, so the budget goes to M2 seeds of the
+  selected model, not a second architecture. XLM-R-base's declared role is
+  **fallback only**: it replaces `phobert-base-ft` in M1 solely if PhoBERT
+  is blocked (checkpoint/license verification fails, or segmentation
+  determinism cannot be shown — `pilot-experiment-plan.md` §13b), as a
+  documented deviation with owner approval.
 - PhoBERT checkpoint facts (verified 2026-11-07 from the Hugging Face card
   `vinai/phobert-base` and `config.json`): ~135M parameters, hidden 768,
   12 layers, vocab 64,001 BPE tokens, `max_position_embeddings=258`, card
@@ -56,16 +70,17 @@ agreement's terms (especially any prohibition on uploading the corpus to
 third-party services) are recorded in `reports/` **before** any cloud-GPU
 scenario is considered — see `experiment-matrix.md`.
 
-Expected corpus scale for planning only: ≈16k sentences total; the commonly
-cited official split is train 11,426 / validation 1,583 / test 3,166
-`[ESTIMATE]` — secondary sources disagree slightly on train/test counts, so
-the authoritative numbers are whatever the delivered files contain, recorded
-at the integrity gate.
+Expected corpus scale for planning only: ≈16k sentences total; the official
+split is train 11,426 / validation 1,583 / test 3,166 per the authors'
+`uitnlp` card `[VERIFIED FACT]`, fetched 2026-11-07 — the authoritative
+numbers remain whatever the delivered files contain, recorded at the
+integrity gate.
 
 ### 3.2 Integrity gate (must pass before any model sees the data)
 
 Run in order; each step is recorded in a committed report (aggregate
-statistics only; raw text never committed):
+statistics only; raw text stays out of committed reports — conditional on
+the G3 hardening, see `risk-register.md` R-05/R-08):
 
 1. **Layout and line alignment.** Each split directory contains exactly
    `sentences.txt` and `sentiments.txt`; line counts match per split. The
@@ -98,6 +113,21 @@ Phase 1's loader hard-codes `RAW_SENTIMENT_TO_LABEL = {0: "positive",
 `ClassLabel` declaration — a secondary-source inference, explicitly flagged
 for verification in `docs/dataset-uit-vsfc.md`. Because every metric in both
 phases depends on this mapping, it is verified **before** trusting it:
+
+**Hardening-pass update (2026-11-07):** the full evidence trail is in
+[label-semantics-evidence.md](label-semantics-evidence.md). The two public
+loaders consume the identical raw files with contradictory `ClassLabel`
+orders, so exactly one mislabels every row. The authors' own HF org is
+consistent across three independent artifacts (card prose, embedded loader
+script, served parquet features) — all say 0=negative, 1=neutral,
+2=positive — while SEACrowd's reorder has no verification trail. The
+**planning prior is therefore H1 (0=negative, 1=neutral, 2=positive)**; if
+the audit confirms H1, Phase 1's loader mapping must be corrected (a Phase 1
+branch change) before any real-data run. The gate below is unchanged: the
+prior is not trusted for training until author confirmation + blind audit
+settle it (G2). The audit's pre-registered hypotheses and pass/fail criteria
+are H1/H2 in `label-semantics-evidence.md` §7; the pilot-level blocking
+procedure is `pilot-experiment-plan.md` §2.4.
 
 1. **Authoritative documentation.** The corpus package delivered after
    signing is checked for label-encoding documentation (README or agreement
@@ -141,13 +171,15 @@ violation, not a convenience.
 | Tokenization | TF-IDF analyzer (whitespace words or char_wb), `lowercase=True` inside the vectorizer | Word segmentation, then PhoBERT BPE WordPiece tokenizer |
 | Word segmentation | Not applied (whitespace tokens) | **Mandatory**: PhoBERT was pre-trained on word-segmented Vietnamese (underscore-joined syllables, e.g. `sinh_viên`); unsegmented input measurably degrades it |
 | Case handling | Lowercased by the vectorizer | Preserved (tokenizer is case-preserving) |
-| Sequence length | Unbounded (sparse features) | `max_seq_length=128`, truncation from the right; derived from the train-split token-length distribution (p99 must fit; verify empirically after segmentation and record the percentile) |
+| Sequence length | Unbounded (sparse features) | `max_seq_length=256` (PhoBERT's model maximum, `tokenization-design.md` §3), truncation from the right; the segmented train-split token-length distribution (p99) and per-split truncation rate are measured and recorded — a meaningful tail is a documented limitation, not silent truncation |
 | Fitted on our data | TF-IDF vocabulary + IDF, train split only | Nothing (segmenter and tokenizer are pre-trained externally; their models were not trained on UIT-VSFC) |
 
-Segmentation tooling: **VnCoreNLP RDRSegmenter** (`py_vncorenlp`), Apache-2.0
-including the pre-trained models — verified 2026-11-07. `underthesea` is the
-backup; its license changed from GPL-3.0 to Apache-2.0 only in recent
-releases, so if used, the pinned version's license is recorded. The
+Segmentation tooling: **VnCoreNLP RDRSegmenter** (`py_vncorenlp`) — the
+VnCoreNLP tool + pre-trained models are **GPLv3** (`LICENSE.md`, verified
+2026-11-07; `tokenization-design.md` §4): acceptable for local research use,
+re-examine before any Phase 3 serving. `underthesea` is the license-safe
+backup — **Apache-2.0** on the main repo (older releases were GPL-3.0, so
+the pinned version's license is recorded). The
 segmentation step's runtime on ≈16k short sentences is minutes on CPU
 `[ESTIMATE]` and is recorded once in the report.
 
@@ -185,8 +217,8 @@ Sources of randomness differ by family, so the policy does too:
 | ----- | ----- | ---------- | ----------------- |
 | Data preparation (fallback split, latency sampling) | 42 | Single | Not stochastic |
 | Classical fitting (`majority`, `tfidf-logreg`) | 42 (`random_state`) | Single run | ≈0: deterministic given fixed data and settings; optionally one repeat with seed 43 to confirm determinism (minutes `[ESTIMATE]`) |
-| Fine-tuning search runs (§7) | 42 only | Single run per candidate | Not used for claims; search only |
-| Fine-tuning final configuration | Plan A: {42, 43, 44} (3 seeds); Plan B: {42, 43, 44, 45, 46} (5 seeds) if Plan A's total wall time fits the budget (`experiment-matrix.md`) | 3-5 independent runs, identical hyperparameters | mean ± std of validation macro-F1 and test macro-F1 across seeds |
+| Fine-tuning pilot run (M1, §7) | 42 only | Single fixed-recipe run | Not used for variance claims; single-seed phrasing ("in this run") |
+| Fine-tuning escalation (M2, pre-declared) | {42, 7, 2026} (3 seeds) | 3 independent runs, identical hyperparameters, differing only in seed | mean ± std of validation macro-F1 and test macro-F1 across seeds; headline = mean, fixed in advance |
 | Transformer internal seeds | Per run: `torch`, `numpy`, `python.random` all set to the run's seed; dataloader shuffling seeded | Same as above | CUDA nondeterminism is not bitwise-eliminated; this is documented, not hidden |
 
 Rules:
@@ -201,7 +233,13 @@ Rules:
 - Seed 42 remains the project default for everything deterministic, matching
   Phase 1.
 
-## 7. Fine-tuning hyperparameter search budget
+## 7. Fine-tuning hyperparameter search budget (M2 escalation — not the pilot)
+
+**M1 uses none of this section**: the pilot runs the single pre-declared
+configuration of `pilot-experiment-plan.md` §5 (LR 3e-5, effective batch 32
+via micro-batch 8 × accumulation 4, max length 256, ≤ 5 epochs, seed 42) —
+zero search. This section stays pre-designed as the M2 escalation and runs
+only after M1 is reported.
 
 ### 7.1 The search
 
@@ -209,8 +247,8 @@ Rules:
 | --------- | ------ | ------ |
 | Learning rate | {2e-5, 3e-5, 5e-5} | Tuned (3 candidates, one seed each) |
 | Epochs | ≤ 5 with early stopping | Tuned implicitly by early stopping, not by the grid |
-| Batch size | 16 effective (fallback 8 × grad-accum 2 on OOM, recorded per run) | Fixed |
-| Max sequence length | 128 (from the data, §4) | Fixed |
+| Batch size | 32 effective (micro-batch 8 × grad-accum 4; OOM ladder halves the micro-batch and doubles accumulation — `pilot-experiment-plan.md` §7.2), recorded per run | Fixed |
+| Max sequence length | 256 (PhoBERT model maximum, §4) | Fixed |
 | Weight decay | 0.01 | Fixed |
 | Warmup | Linear schedule, 10% warmup steps | Fixed |
 | Precision | fp16 on GPU (fp32 on CPU fallback) | Fixed per device |
@@ -232,12 +270,14 @@ sentences.
 
 ### 7.3 Why the grid stays small
 
-- **Cost.** Each run is a full fine-tune: ≈715 steps/epoch × ≤ 5 epochs on
-  train ≈ 11.4k sentences `[ESTIMATE]`. On the RTX 3060 Laptop 6 GB that is
-  ≈15-40 min per run `[ESTIMATE]` (fp16, seq 128, batch 16; ~0.3-0.6
-  s/step). The 3-candidate search ≈ 1-2 h; a 3×3×3 grid (LR × batch ×
-  epochs) would be ≈ 27 runs ≈ 9-18 h of serial GPU time on the same 6 GB
-  card — runs cannot be parallelized on it.
+- **Cost.** Each run is a full fine-tune: ≈1,429 micro-steps and ≈357
+  optimizer updates per epoch × ≤ 5 epochs on train ≈ 11.4k sentences
+  `[ESTIMATE]`. On the RTX 3060 Laptop 6 GB that is ≈20-45 min per run
+  `[ESTIMATE]` (fp16, seq 256, micro-batch 8 × grad-accum 4; ~0.2-0.35
+  s/micro-step — `pilot-experiment-plan.md` §7.1 arithmetic). The
+  3-candidate search ≈ 1-2.5 h; a 3×3×3 grid (LR × batch × epochs) would be
+  ≈ 27 runs ≈ 9-20 h of serial GPU time on the same 6 GB card — runs cannot
+  be parallelized on it.
 - **Information.** Published fine-tuning studies (Dodge et al. 2020 "Show
   Your Work"; Mosbach et al., ICLR 2021) show that at small-dataset scale,
   seed-to-seed variance routinely rivals or exceeds the deltas between
@@ -254,10 +294,11 @@ All selection uses validation macro-F1 with the same metric code as Phase 1;
 1. **Within a run**: the end-of-epoch checkpoint with the highest validation
    macro-F1; ties break to the **earliest** epoch (less overfitting).
    Storage: keep best + last only; record sha256 of each saved checkpoint.
-2. **Across search candidates**: the candidate whose best checkpoint has the
-   highest validation macro-F1; ties break to the **first** candidate in the
-   fixed order [2e-5, 3e-5, 5e-5] — mirroring Phase 1's "ties break to the
-   first candidate".
+2. **Across search candidates** (M2 only — M1 has a single pre-declared
+   candidate): the candidate whose best checkpoint has the highest
+   validation macro-F1; ties break to the **first** candidate in the fixed
+   order [2e-5, 3e-5, 5e-5] — mirroring Phase 1's "ties break to the first
+   candidate".
 3. **Final artifact**: the seed-42 run of the selected configuration, at its
    best-validation checkpoint, becomes the artifact carried into Phase 3.
    The other seeds exist for variance reporting only. This rule is fixed in
@@ -310,9 +351,12 @@ load-bearing facts:
 
 - **PhoBERT-base full fine-tune fits 6 GB** `[ESTIMATE]`: mixed precision
   ≈ 0.27 GB fp16 weights + 0.54 GB fp32 master + 1.08 GB AdamW states +
-  0.27 GB gradients ≈ 2.2 GB, plus ≈ 1-1.5 GB activations at batch 16 ×
-  seq 128 — roughly 3.5-4.5 GB total. Batch 8 × grad-accum 2 is the
-  documented fallback if OOM appears.
+  0.27 GB gradients ≈ 2.2 GB, plus ≈ 1-2 GB activations at micro-batch 8 ×
+  seq 256 (`compute-feasibility.md` §3.2) — roughly 3.2-4.2 GB total, with
+  headroom on 6 GB. The pre-declared OOM ladder (halve micro-batch, double
+  accumulation, effective batch unchanged) is the fallback if measurement
+  disagrees — `pilot-experiment-plan.md` §7.2; no batch size is guaranteed
+  before measurement.
 - **PhoBERT-large does not fit 6 GB** for training (`[ESTIMATE]` ≈ 6-7 GB
   optimizer state alone); it is cloud-GPU-only and optional.
 - **CPU-only fine-tuning** is ≈10-25× slower than the local GPU
@@ -329,7 +373,8 @@ load-bearing facts:
 | ---- | ------- | -------- |
 | Dataset license stays blocked | No signed agreement | Nothing runs; the matrix keeps everything `BLOCKED(dataset license)`; Phase 2 remains design-only (current state) |
 | Label mapping fails the audit | §3.3 acceptance rule fails | Stop; correct mapping against author documentation; re-audit; no training until it passes |
-| VRAM OOM at batch 16 | CUDA OOM on RTX 3060 6 GB | batch 8 × grad-accum 2 (recorded deviation); fp16 already default |
+| Segmentation determinism cannot be shown | Double-segmentation fingerprints differ or golden-file test fails | Halt the PhoBERT arm; debug/pin the tool version; if unresolvable, `phobert-base-ft` = `BLOCKED(segmentation)` and the XLM-R fallback (§2) becomes available with owner approval (`pilot-experiment-plan.md` §13b) |
+| VRAM OOM at micro-batch 8 | CUDA OOM on RTX 3060 6 GB | Pre-declared ladder: 8×4 → 4×8 → 2×16 → 1×32 (effective batch stays 32, recorded deviation); OOM even at micro-batch 1 = hardware-failure verdict, fallback per `pilot-experiment-plan.md` §13c |
 | fp16 loss instability | Non-finite loss / NaN validation | Switch the affected run to fp32, record the deviation, re-run that candidate |
 | Neutral class collapse in validation | Neutral recall ≈ 0 across searched LRs | Planned class-weighted candidate joins the search on validation (§7.1), before any test run |
 | Fine-tuning infeasible on local GPU | Sustained hardware failure / VRAM below expectation | Frozen-encoder variant as the reported deep model; full fine-tune stays `BLOCKED(compute)`; claims scoped accordingly |

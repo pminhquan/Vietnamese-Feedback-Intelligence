@@ -99,7 +99,7 @@ metadata:
 
 - Classical models: single deterministic run (seed 42); no variance to
   report.
-- Fine-tuned models: 3 seeds minimum ({42, 43, 44}), 5 if the budget allows
+- Fine-tuned models: 3 seeds minimum ({42, 7, 2026}), 5 if the budget allows
   (`experiment-blueprint.md` §6). For each seed: validation macro-F1 of the
   selected checkpoint, test macro-F1 of that checkpoint. Reported as:
   per-seed table + mean ± std across seeds, both on validation and test.
@@ -163,10 +163,15 @@ Procedure:
    differently, compare per-cell rates on the same validation samples
    (paired by line index) — this is the honest way to say "the transformer
    fixes X but breaks Y".
-5. **Privacy.** Raw student text is never committed, per the Phase 1 dataset
-   review: committed reports carry aggregates, line indices, and at most
-   short truncated fragments, preferring paraphrase; per-sample dumps and
-   full texts stay in local gitignored directories.
+5. **Privacy.** Raw student text must stay out of every committed path —
+   conditional on the G3 artifact/ignore hardening landing first
+   (`00-executive-decision.md` gate G3). The Phase 1 precedent is weaker
+   than "never committed": `reports/artifacts/data_report.json` already
+   embeds the literal text of cross-split duplicates [VERIFIED FACT —
+   risk-register.md R-05], and the gitignore gaps for torch-era files are
+   verified open (R-08). Committed reports carry aggregates, line indices,
+   and at most short truncated fragments, preferring paraphrase; per-sample
+   dumps and full texts stay in local gitignored directories.
 
 ## 8. Reproducibility metadata (per experiment)
 
