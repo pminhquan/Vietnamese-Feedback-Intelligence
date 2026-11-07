@@ -20,19 +20,65 @@ This repository currently targets **Phase 1** only:
 Deep-learning models (PhoBERT), API serving, and dashboards are explicitly
 **out of scope** for Phase 1 and will be introduced in later phases.
 
-## Status
+## Dataset status (important)
 
-Work in progress. Phase 1 is being developed on a feature branch and will land
-via a reviewed pull request. See `docs/` for the project specification,
-experiment protocol, and roadmap.
+The candidate dataset UIT-VSFC cannot be redistributed without permission:
+its license is unverified (`license: unknown` on the HF mirror) and the
+author's official channel requires signing a corpus user agreement. Full
+findings and the unblocking procedure: [`docs/dataset-uit-vsfc.md`](docs/dataset-uit-vsfc.md).
 
-## Requirements
+**Consequently, no model metrics are reported in this repository yet.** The
+entire pipeline is implemented and tested on deterministic synthetic
+fixtures; real experiments run locally once the owner obtains access.
 
-- Python 3.12
-- Windows PowerShell (setup instructions provided), but any OS works
+## Setup (Windows PowerShell)
 
-## Development
+```powershell
+py -3.12 -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -e ".[dev]"
+```
 
-Setup and usage instructions will be finalized together with Phase 1.
-The authoritative workflow is described in `HANDOFF.md` (added on the feature
-branch).
+## Verify (lint + format + tests + structural checks)
+
+```powershell
+python scripts\verify.py
+```
+
+## CLI
+
+```powershell
+# Validate raw data and report duplicates/leakage/distribution
+vfi prepare-data --config configs\baseline.yaml
+
+# Train baselines (fit on train, select on validation; test untouched)
+vfi train --config configs\baseline.yaml
+
+# Evaluate a trained artifact on the official test split
+vfi evaluate --model-id tfidf-logreg --config configs\baseline.yaml
+
+# Single-text prediction from a locally trained artifact
+vfi predict --text "Giảng viên giải thích rất dễ hiểu"
+```
+
+## Documentation
+
+| Document | Purpose |
+| --- | --- |
+| [`docs/project-spec.md`](docs/project-spec.md) | Scope, architecture, acceptance criteria |
+| [`docs/experiment-protocol.md`](docs/experiment-protocol.md) | Split discipline, metrics, latency protocol, reproducibility |
+| [`docs/dataset-uit-vsfc.md`](docs/dataset-uit-vsfc.md) | Dataset investigation, license findings, unblocking steps |
+| [`docs/roadmap.md`](docs/roadmap.md) | Phase 1-4 plan (Phase 2+ not started) |
+| [`docs/learning-notes.md`](docs/learning-notes.md) | Owner learning notes in Vietnamese + exercises |
+| [`HANDOFF.md`](HANDOFF.md) | Reproduction instructions for developers |
+| [`AGENTS.md`](AGENTS.md) | Ground rules for AI assistants |
+
+## Development principles
+
+- Real evaluation evidence over visual complexity; no invented numbers.
+- Train/validation/test discipline; TF-IDF vocabulary learned from training
+  data only.
+- Vietnamese-safe preprocessing: Unicode NFC + whitespace collapse; no
+  stopword removal, no diacritic stripping.
+- Artifacts carry provenance metadata; loading refuses untrusted artifacts.
