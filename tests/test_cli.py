@@ -44,9 +44,19 @@ class TestPrepareData:
         assert exit_code == 0
         report_path = project["reports"] / "data_report.json"
         report = json.loads(report_path.read_text(encoding="utf-8"))
-        assert report["train"]["n_records"] == 12
-        assert report["leakage"]["cross_split_duplicate_texts"] == []
-        assert "fingerprint" in report["train"]
+        # The report is keyed by split under "splits" and is privacy-safe.
+        assert report["splits"]["train"]["n_records"] == 12
+        assert report["splits"]["train"]["class_distribution"] == {
+            "negative": 4,
+            "neutral": 4,
+            "positive": 4,
+        }
+        assert "fingerprint" in report["splits"]["train"]
+        # No raw feedback text anywhere in the report (privacy regression).
+        from tests.conftest import make_records
+
+        for record in make_records(2, split="train"):
+            assert record.text not in report_path.read_text(encoding="utf-8")
 
     def test_missing_data_fails_cleanly(self, project: dict[str, Path]) -> None:
         project["raw"].rename(project["tmp"] / "moved_away")
@@ -69,7 +79,10 @@ class TestTrainEvaluate:
         training_report = json.loads(
             (project["reports"] / "training_report.json").read_text(encoding="utf-8")
         )
-        assert training_report["split_sizes"]["test_untouched"] == 6
+        # Test records are never loaded by the training command.
+        assert training_report["test_not_loaded_by_training"] is True
+        assert training_report["split_sizes_used"] == {"train": 12, "validation": 6}
+        assert training_report["benchmark_clean"] is True
         assert len(training_report["validation_report"]["search_trials"]) == 4
 
     def test_evaluate_on_test_split(

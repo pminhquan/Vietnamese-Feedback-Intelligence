@@ -135,6 +135,52 @@ def normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def parse_label_mapping(spec: str) -> dict[int, str]:
+    """Parse a compact raw-label mapping spec: ``"0:positive,1:negative,2:neutral"``.
+
+    Case-insensitive labels; must cover raw integers 0, 1, 2 exactly once and
+    map onto a permutation of the canonical labels. Used by the config-driven
+    label gate so the owner can declare the confirmed encoding without
+    editing source constants.
+
+    Raises:
+        DataLoadingError: on a malformed or non-permutation spec.
+    """
+    mapping: dict[int, str] = {}
+    if not spec.strip():
+        raise DataLoadingError("label mapping spec is empty")
+    for part in spec.split(","):
+        if ":" not in part:
+            raise DataLoadingError(
+                f"malformed label mapping part {part!r}; expected 'raw:label' pairs "
+                "like '0:positive,1:negative,2:neutral'"
+            )
+        raw_text, _, label_text = part.partition(":")
+        try:
+            raw = int(raw_text.strip())
+        except ValueError as exc:
+            raise DataLoadingError(f"malformed raw label {raw_text!r} in {spec!r}") from exc
+        label = label_text.strip().lower()
+        if label not in CANONICAL_LABELS:
+            raise DataLoadingError(
+                f"unknown canonical label {label_text!r} in {spec!r}; expected one of "
+                f"{list(CANONICAL_LABELS)}"
+            )
+        if raw in mapping:
+            raise DataLoadingError(f"raw label {raw} declared twice in {spec!r}")
+        mapping[raw] = label
+    if set(mapping) != {0, 1, 2}:
+        raise DataLoadingError(
+            f"label mapping {spec!r} must cover raw integers 0, 1, 2 exactly "
+            f"once; got {sorted(mapping)}"
+        )
+    if sorted(mapping.values()) != sorted(CANONICAL_LABELS):
+        raise DataLoadingError(
+            f"label mapping {spec!r} must map onto a permutation of {list(CANONICAL_LABELS)}"
+        )
+    return mapping
+
+
 def _read_lines(path: Path) -> list[str]:
     if not path.exists():
         raise DataLoadingError(f"Expected dataset file is missing: {path}")
