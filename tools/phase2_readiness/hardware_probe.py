@@ -1,14 +1,43 @@
-"""Offline, stdlib-only hardware probe for VFI Phase 2 readiness.
+r"""Offline, stdlib-only hardware probe for VFI Phase 2 readiness.
 
 Collects OS, CPU, RAM, GPU, disk, Python and library facts about the current
 machine without network access, third-party dependencies, or model weights.
 
 Privacy contract:
-- stdout receives a SANITIZED summary only (no username, hostname, serials,
-  MACs, tokens, or personal paths), enforced by a fail-closed guard.
+- Default execution creates NO files of any kind; stdout receives a SANITIZED
+  summary only (no username, hostname, serials, MACs, tokens, or personal
+  paths), enforced by a fail-closed guard.
 - Detailed results (including hostname, username, Python executable path and
-  raw nvidia-smi output) are written ONLY to an explicit ``--output PATH``
-  that lies outside the current directory tree, or to an OS temp file.
+  raw nvidia-smi output) are written ONLY when an explicit ``--output PATH``
+  is passed. Destinations that resolve (symlinks followed) inside this
+  repository are refused with exit code 1 and nothing is written. The
+  refusal compares a canonicalized spelling: Windows extended-length
+  prefixes (``\\?\``) are stripped before and after resolving, which also
+  covers spellings that Windows canonicalizes while re-adding the prefix (a
+  ``\\?\``-prefixed argument, or a directory component with a trailing
+  space); a UNC spelling of a local admin share (``\\localhost\<drive>$\...``,
+  also via 127.0.0.1 or this machine's hostname) is mapped to its true
+  drive-letter path so the refusal applies to the real location, and every
+  other UNC/network device path is refused outright. The repository root is
+  located by walking up from this module's file to the enclosing ``.git``
+  entry, independent of the current working directory.
+- Error messages never contain OS exception text (Windows OSErrors embed
+  absolute paths); they carry only the exception class, the errno, and, when
+  it passes the guard below, the user-supplied destination path. Any error
+  string that would contain a known sensitive value is replaced by a generic
+  category message. Argparse usage errors redact caller-supplied values in
+  place (keeping the fixed message template) and keep argparse's exit
+  code 2.
+- Limits of the sanitization guard: it matches identity candidates gathered
+  from the OS (``getpass.getuser()``, ``os.getlogin()``, ``platform.node()``,
+  ``Path.home()``) and from the process environment (``USERNAME``,
+  ``LOGNAME``, ``USER``, ``LNAME``, ``USERPROFILE``, ``HOME``, plus their
+  path basenames), so casually spoofing those variables cannot blind it to
+  the real login name. It cannot detect arbitrary personal strings (other
+  accounts' names, other machines' hostnames, tokens, serial numbers),
+  values shorter than 3 characters, or an identity changed below the
+  environment. It is a best-effort seatbelt for this tool's own output, not
+  a general-purpose secret scanner.
 
 Exit codes: 0 = probe succeeded (a missing GPU is NOT an error),
 1 = probe error (collection failure, sanitization violation, unsafe output
@@ -29,11 +58,10 @@ import shutil
 import string
 import subprocess
 import sys
-import tempfile
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 NVIDIA_SMI_BINARY = "nvidia-smi"
 NVIDIA_SMI_QUERY_FIELDS = "name,memory.total,driver_version,compute_cap"
@@ -41,6 +69,12 @@ NVIDIA_SMI_TIMEOUT_SECONDS = 15
 GIB = 1024**3
 SUMMARY_SCHEMA_VERSION = 1
 INTERESTING_LIBRARIES = ("numpy", "sklearn", "torch", "transformers")
+# Identity-bearing environment variables the sanitization guard also matches
+# on (see _sensitive_values): spoofing them must not blind the guard.
+ENV_IDENTITY_VARS = ("USERNAME", "LOGNAME", "USER", "LNAME", "USERPROFILE", "HOME")
+# Windows extended-length path prefixes (device namespace).
+EXTENDED_PATH_PREFIX = "\\\\?\\"
+EXTENDED_UNC_PATH_PREFIX = "\\\\?\\UNC\\"
 
 WhichFn = Callable[[str], str | None]
 RunnerFn = Callable[..., subprocess.CompletedProcess[str]]
@@ -97,7 +131,9 @@ def query_nvidia_smi(
         return {
             "nvidia_smi_available": True,
             "gpus": [],
-            "query_error": f"nvidia-smi execution failed: {exc}",
+            "query_error": (
+                f"nvidia-smi execution failed: {_redact_sensitive(_subprocess_error_text(exc))}"
+            ),
             "reason": None,
             "raw_output": None,
         }
@@ -107,7 +143,7 @@ def query_nvidia_smi(
         return {
             "nvidia_smi_available": True,
             "gpus": [],
-            "query_error": f"nvidia-smi failed: {detail}",
+            "query_error": f"nvidia-smi failed: {_redact_sensitive(detail)}",
             "reason": None,
             "raw_output": None,
         }
@@ -315,12 +351,40 @@ def collect_report(
     return summary, details
 
 
+def _path_basename(text: str) -> str:
+    """Return the last path component of *text* ("" when it has none)."""
+    return text.replace("\\", "/").rsplit("/", 1)[-1]
+
+
 def _sensitive_values() -> list[tuple[str, str]]:
+    r"""Gather candidate (category, value) pairs for the sanitization guard.
+
+    Sources:
+    - ``getpass.getuser()``: the documented username source. It prefers
+      LOGNAME/USER/LNAME/USERNAME from the environment, so a manipulated
+      environment can forge it.
+    - ``os.getlogin()``: the OS-reported logon-session name; on Windows it
+      ignores the environment, so it survives casual env spoofing.
+    - ``platform.node()``: hostname.
+    - ``Path.home()``: follows USERPROFILE/HOME, so it can be forged too.
+    - every identity-bearing environment variable in
+      :data:`ENV_IDENTITY_VARS`, plus its path basename when it looks like a
+      path: forged values become redaction needles too, and when only some
+      variables are forged the remaining genuine ones still match.
+
+    Fail closed: extra candidates only widen redaction; a spurious match
+    replaces output with a generic category message, never with the value.
+    This defends against casual environment manipulation and against this
+    tool echoing its own inputs; it is NOT a general-purpose secret scanner.
+    """
     values: list[tuple[str, str]] = []
-    try:
-        values.append(("username", getpass.getuser()))
-    except Exception:
-        pass
+    for category, source in (("username", getpass.getuser), ("login_name", os.getlogin)):
+        try:
+            value = source().strip()
+        except Exception:
+            continue
+        if value:
+            values.append((category, value))
     node = platform.node()
     if node:
         values.append(("hostname", node))
@@ -328,6 +392,14 @@ def _sensitive_values() -> list[tuple[str, str]]:
     values.append(("home_path", str(home)))
     if home.name:
         values.append(("home_dir_name", home.name))
+    for var in ENV_IDENTITY_VARS:
+        raw = (os.environ.get(var) or "").strip()
+        if not raw:
+            continue
+        values.append((f"env_{var.lower()}", raw))
+        base = _path_basename(raw)
+        if base and base != raw:
+            values.append((f"env_{var.lower()}_basename", base))
     return values
 
 
@@ -349,6 +421,187 @@ def assert_sanitized(payload: str) -> None:
             f"(categories: {', '.join(sorted(set(matches)))}); refusing to print"
         )
         raise SanitizationError(msg)
+
+
+def _redact_sensitive(text: str) -> str:
+    """Return *text*, or a generic category message when it holds sensitive values.
+
+    Best-effort: only the known identity candidates (OS-reported username and
+    login name, hostname, home path/name, and the identity environment
+    variables) are detected; arbitrary personal strings are not (see the
+    module docstring for the exact guarantee and its limits).
+    """
+    matches = find_sensitive_matches(text)
+    if not matches:
+        return text
+    categories = ", ".join(sorted(set(matches)))
+    return f"[redacted: potential sensitive value(s): {categories}]"
+
+
+def _redact_sensitive_in_place(text: str) -> str:
+    """Replace each sensitive value inside *text* with a category marker.
+
+    Unlike :func:`_redact_sensitive` (which replaces the whole string), this
+    keeps the surrounding text readable. It exists for messages built from a
+    fixed template that must stay recognizable, such as argparse usage errors
+    ("unrecognized arguments: ..."). Longer values are replaced first so a
+    value that contains another one is fully covered.
+
+    Fail closed: if any sensitive value still matches after the replacements
+    (e.g. an echoed value whose case differs from the candidate), the whole
+    text falls back to the generic category message of
+    :func:`_redact_sensitive`.
+    """
+    redacted = text
+    for category, value in sorted(_sensitive_values(), key=lambda pair: len(pair[1]), reverse=True):
+        needle = value.strip()
+        if len(needle) >= 3 and needle in redacted:
+            redacted = redacted.replace(needle, f"[redacted:{category}]")
+    if find_sensitive_matches(redacted):
+        return _redact_sensitive(text)
+    return redacted
+
+
+def _subprocess_error_text(exc: BaseException) -> str:
+    """Render a subprocess/OSError for summaries without exception text.
+
+    Only the exception class and errno (when present) survive; the message is
+    dropped because OS errors can embed absolute paths containing personal
+    values. Callers pass the result through :func:`_redact_sensitive` as a
+    second layer.
+    """
+    errno = getattr(exc, "errno", None)
+    if errno is not None:
+        return f"{type(exc).__name__} errno {errno}"
+    return type(exc).__name__
+
+
+def _errno_text(exc: OSError) -> str:
+    """Render an OSError without its message, which may embed absolute paths."""
+    if exc.errno is not None:
+        return f"{type(exc).__name__} errno {exc.errno}"
+    return type(exc).__name__
+
+
+def _find_repo_root(start: Path) -> Path:
+    """Return the repository root containing the module file *start*.
+
+    Walks up from *start* looking for a ``.git`` entry (a file or a directory,
+    so linked worktrees count too), independent of the current working
+    directory. Falls back to ``start.parents[2]`` — the repository root of a
+    normal checkout (``<root>/tools/phase2_readiness/<module>.py``) — when no
+    ``.git`` entry is found above *start*.
+    """
+    for candidate in (start, *start.parents):
+        if (candidate / ".git").exists():
+            return candidate
+    try:
+        return start.parents[2]
+    except IndexError:  # pragma: no cover - the module file always has 3+ parents
+        return start
+
+
+def _strip_extended_prefix(text: str) -> str:
+    r"""Remove Windows extended-length prefixes from *text*.
+
+    ``\\?\UNC\server\share\...`` becomes ``\\server\share\...`` and
+    ``\\?\X:\...`` becomes ``X:\...``; the prefix match is case-insensitive
+    and the remainder keeps its case. Anything else is returned unchanged.
+    """
+    lowered = text.lower()
+    if lowered.startswith(EXTENDED_UNC_PATH_PREFIX.lower()):
+        return "\\\\" + text[len(EXTENDED_UNC_PATH_PREFIX) :]
+    if lowered.startswith(EXTENDED_PATH_PREFIX.lower()):
+        return text[len(EXTENDED_PATH_PREFIX) :]
+    return text
+
+
+def _local_admin_share_path(text: str) -> str | None:
+    r"""Map a local admin-share UNC spelling to its drive-letter path.
+
+    ``\\localhost\C$\tail`` (also via ``127.0.0.1`` or this machine's own
+    hostname, any drive letter, case-insensitive) names the local
+    ``C:\tail``. Returning the drive-letter spelling lets the repo refusal
+    see the true location instead of a stray tree. Every other UNC device
+    path returns None and is refused outright by :func:`_repo_internal_refusal`.
+    """
+    server, sep, rest = text[2:].partition("\\")
+    if not sep:
+        return None
+    share, sep, tail = rest.partition("\\")
+    if not sep:
+        tail = ""
+    local_servers = {"localhost", "127.0.0.1"}
+    node = platform.node()
+    if node:
+        local_servers.add(node.lower())
+    if server.lower() not in local_servers:
+        return None
+    if len(share) == 2 and share[0] in string.ascii_letters and share[1] == "$":
+        drive = f"{share[0].upper()}:\\"
+        return drive + tail if tail else drive
+    return None
+
+
+def _resolve_output(output: Path) -> Path:
+    r"""Expand ``~`` and canonicalize *output* for the refusal comparison.
+
+    ``Path.resolve()`` alone is not enough on Windows (each behavior below was
+    reproduced against Python 3.12):
+
+    - ``resolve()`` keeps the ``\\?\`` extended prefix, both for arguments the
+      caller already wrote that way and for components Windows canonicalizes
+      (e.g. a trailing-space directory). Anchors like ``\\?\D:\`` never match
+      the plain repository root, so the prefix is stripped before resolving
+      and again from the result.
+    - ``resolve()`` passes UNC spellings through unchanged (and its fallback
+      for unreachable shares is not trustworthy), so UNC inputs are
+      canonicalized explicitly: a local admin-share spelling is mapped to its
+      drive-letter path and then resolved normally (so the repo refusal
+      applies to the true location), and every other UNC device path becomes
+      the ``\\?\UNC\`` device form, which the refusal rejects outright.
+    """
+    text = _strip_extended_prefix(str(output.expanduser()))
+    if text.startswith("\\\\"):
+        local = _local_admin_share_path(text)
+        if local is None:
+            return Path(EXTENDED_UNC_PATH_PREFIX + text[2:])
+        text = local
+    resolved = Path(text).resolve()
+    return Path(_strip_extended_prefix(str(resolved)))
+
+
+def _repo_internal_refusal(dest: Path) -> str | None:
+    r"""Return a refusal message when *dest* is unsafe as an output location.
+
+    The check runs on the canonicalized spelling (extended prefixes stripped,
+    so plain drive-letter anchors are always compared) and refuses outright:
+    UNC/network device paths other than local admin-share spellings, which
+    :func:`_resolve_output` has already mapped to their drive-letter path (a
+    remaining UNC share cannot be verified to be free of repository aliases),
+    and drive-relative paths (their location depends on the per-drive working
+    directory, so no parents comparison could be trusted). Otherwise it
+    refuses paths inside the repository.
+    """
+    dest = Path(_strip_extended_prefix(str(dest)))
+    if str(dest).startswith("\\\\"):
+        return (
+            "hardware_probe: refusing UNC/network device paths for --output; "
+            "choose a fully qualified local drive-letter path outside the repository."
+        )
+    if dest.drive and not dest.root:
+        return (
+            "hardware_probe: refusing a drive-relative --output path whose location "
+            "depends on the working directory; choose a fully qualified local "
+            "drive-letter path outside the repository."
+        )
+    root = _find_repo_root(Path(__file__).resolve())
+    if dest == root or root in dest.parents:
+        return (
+            "hardware_probe: refusing --output inside the VFI repository; "
+            "detailed results may contain personal values. Choose a path outside it."
+        )
+    return None
 
 
 def render_text_summary(summary: dict[str, Any]) -> str:
@@ -398,35 +651,50 @@ def render_text_summary(summary: dict[str, Any]) -> str:
 
 
 def _write_details_to_output(details: dict[str, Any], output: Path) -> int:
-    dest = output.expanduser().resolve()
-    cwd = Path.cwd().resolve()
-    if dest == cwd or cwd in dest.parents:
+    dest = _resolve_output(output)
+    refusal = _repo_internal_refusal(dest)
+    if refusal is not None:
+        print(refusal, file=sys.stderr)
+        return 1
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
         print(
-            "hardware_probe: refusing --output inside the current directory tree; "
-            "detailed results may contain personal values. Choose a path outside it.",
+            f"hardware_probe: cannot create parent directory for detailed results "
+            f"({_errno_text(exc)})",
             file=sys.stderr,
         )
         return 1
     try:
-        dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(json.dumps(details, indent=2), encoding="utf-8")
     except OSError as exc:
-        print(f"hardware_probe: cannot write detailed results: {exc}", file=sys.stderr)
+        print(
+            f"hardware_probe: cannot write detailed results to "
+            f"{_redact_sensitive(str(dest))} ({_errno_text(exc)})",
+            file=sys.stderr,
+        )
         return 1
-    print(f"hardware_probe: detailed results written to {dest}", file=sys.stderr)
+    print(
+        f"hardware_probe: detailed results written to {_redact_sensitive(str(dest))}",
+        file=sys.stderr,
+    )
     return 0
 
 
-def _write_details_to_temp(details: dict[str, Any]) -> int:
-    try:
-        handle, temp_path = tempfile.mkstemp(prefix="vfi-hardware-probe-", suffix=".json")
-        with os.fdopen(handle, "w", encoding="utf-8") as stream:
-            json.dump(details, stream, indent=2)
-    except OSError as exc:
-        print(f"hardware_probe: cannot write detailed results to temp file: {exc}", file=sys.stderr)
-        return 1
-    print(f"hardware_probe: detailed results written to temp file: {temp_path}", file=sys.stderr)
-    return 0
+class _SanitizingArgumentParser(argparse.ArgumentParser):
+    r"""ArgumentParser that redacts caller-supplied values in usage errors.
+
+    argparse echoes argv verbatim in usage-error messages (e.g.
+    ``unrecognized arguments: leak C:\Users\<user>\secret.json``), which would
+    bypass the redaction contract every other error path follows. The message
+    is passed through :func:`_redact_sensitive_in_place` before printing, so
+    the fixed template stays recognizable while the caller-supplied values are
+    redacted. The usage line and argparse's exit code 2 are unchanged.
+    """
+
+    def error(self, message: str) -> NoReturn:
+        self.print_usage(sys.stderr)
+        self.exit(2, f"{self.prog}: error: {_redact_sensitive_in_place(message)}\n")
 
 
 def main(
@@ -434,7 +702,7 @@ def main(
     which: WhichFn | None = None,
     runner: RunnerFn | None = None,
 ) -> int:
-    parser = argparse.ArgumentParser(
+    parser = _SanitizingArgumentParser(
         prog="hardware_probe",
         description="Offline stdlib-only hardware probe for VFI Phase 2 readiness.",
     )
@@ -447,14 +715,9 @@ def main(
     )
     args = parser.parse_args(argv)
     if args.output is not None:
-        dest = args.output.expanduser().resolve()
-        cwd = Path.cwd().resolve()
-        if dest == cwd or cwd in dest.parents:
-            print(
-                "hardware_probe: refusing --output inside the current directory tree; "
-                "detailed results may contain personal values. Choose a path outside it.",
-                file=sys.stderr,
-            )
+        refusal = _repo_internal_refusal(_resolve_output(args.output))
+        if refusal is not None:
+            print(refusal, file=sys.stderr)
             return 1
     try:
         summary, details = collect_report(which=which, runner=runner)
@@ -464,12 +727,12 @@ def main(
         print(f"hardware_probe: {exc}", file=sys.stderr)
         return 1
     except Exception as exc:
-        print(f"hardware_probe: probe error: {exc!r}", file=sys.stderr)
+        print(f"hardware_probe: probe error: {_redact_sensitive(repr(exc))}", file=sys.stderr)
         return 1
     print(text)
     if args.output is not None:
         return _write_details_to_output(details, args.output)
-    return _write_details_to_temp(details)
+    return 0
 
 
 if __name__ == "__main__":
