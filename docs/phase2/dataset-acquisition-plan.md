@@ -1,13 +1,18 @@
 # Phase 2 Dataset Acquisition Plan
 
-Date: 2026-11-07. Evidence and per-candidate detail: [dataset-landscape.md](dataset-landscape.md).
-License/access comparison: [dataset-license-matrix.md](dataset-license-matrix.md).
+Date: 2026-11-07 (hardening pass same day: access-condition wording, NEU-ESC gate
+re-verification, full label-encoding evidence trail). Evidence and per-candidate detail:
+[dataset-landscape.md](dataset-landscape.md). License/access comparison:
+[dataset-license-matrix.md](dataset-license-matrix.md). UIT-VSFC label-encoding evidence:
+[label-semantics-evidence.md](label-semantics-evidence.md).
 This plan proposes owner actions only — nothing has been downloaded, sent, or signed.
 
 ## Recommendation
 
-**Primary dataset: UIT-VSFC, obtained through the official corpus user agreement.**
-**Fallback dataset (immediately accessible, start in parallel): NEU-ESC.**
+**Primary dataset: UIT-VSFC, obtained through the official corpus user agreement**
+(PERMISSION REQUIRED — author agreement via `kietnv@uit.edu.vn`).
+**Fallback dataset (USABLE NOW, subject to its HF click-accept gate; start in parallel):
+NEU-ESC.**
 
 Rationale for the primary choice:
 
@@ -33,7 +38,7 @@ the sub-domain and label schema (see the distribution-shift paragraph below).
 |---|---|---|
 | UIT-VSFC (primary) | Signed corpus user agreement required before data delivery; agreement text not public; turnaround unknown | Human action (email + signature); **cannot be engineered around** |
 | UIT-VSFC via mirrors | Both mirrors (`SEACrowd/uit_vsfc`, `uitnlp/vietnamese_students_feedback`) tag `license: unknown` — downloading them is not authorized under project rules | Legal; no workaround |
-| NEU-ESC (fallback) | HF gating (accept conditions); no documented annotation protocol; 4-class schema incl. Toxic; 69% neutral skew; minor card-vs-paper size discrepancy (33,016 vs 32,966) | Mitigable (accept conditions; documented 3-class mapping; never claim label-quality parity with VSFC) |
+| NEU-ESC (fallback) | HF gate (login + click-accept, auto-approved — re-verified 2026-11-07); no documented annotation protocol; 4-class schema incl. Toxic; 69% neutral skew; minor card-vs-paper size discrepancy (33,016 vs 32,966); residual rights risk: Apache-2.0 tag is the uploader's claim over scraped UGC (accepted for non-commercial, non-redistributing use) | Mitigable (click-accept gate; documented 3-class mapping; never claim label-quality parity with VSFC; no raw-text redistribution) |
 | sonlam1102 multilevel (fallback 2) | Cross-domain (product reviews); 5-level collapse; only 5,971 rows; HF gating | Mitigable; use only as secondary corpus |
 | SA-VLSP2016 | Signed VLSP2016 User Agreement (form PDF, email) | Human action |
 | UIT-ViSFD | No formal license (research-use README statement only) + ABSA schema reduction | Legal ambiguity; not recommended as primary |
@@ -43,19 +48,24 @@ the sub-domain and label schema (see the distribution-shift paragraph below).
 
 1. **Send the UIT-VSFC request email** (template below) to `kietnv@uit.edu.vn`.
    Suggested subject: `Request for UIT-VSFC corpus user agreement (non-commercial student research)`.
-   While at it, ask two clarifying questions in the same thread (they cost nothing):
-   - whether the corpus (or a pointer) may be used via the authors' own HF upload
-     (`uitnlp/vietnamese_students_feedback`) once the agreement is signed;
-   - the authoritative raw integer label order for `sentiments.txt` (the two public mirrors
-     disagree: SEACrowd loader `["positive","negative","neutral"]` vs `uitnlp` card
-     "0 negative, 1 neutral, 2 positive").
+   Include the three label/access questions (they cost nothing): the authoritative raw
+   integer-to-sentiment mapping for the distributed `{split}/sentiments.txt` files; whether
+   the two public HF sources (SEACrowd loader vs the authors' own card) interpret those files
+   correctly; and confirmation that signing the user agreement is the required and sufficient
+   access path (and whether the authors' HF upload is a valid delivery channel). The full
+   copy-paste question block is in
+   [label-semantics-evidence.md](label-semantics-evidence.md) §8 and is embedded in the
+   template below.
 2. **Sign and return the agreement**; store the corpus only in `data/raw/uit_vsfc/`
-   (gitignored), verify the label encoding against the author's README, then run
-   `vfi prepare-data` → `vfi train` → `vfi evaluate` per Phase 1 protocol.
-3. **In parallel, create a HF account and accept the NEU-ESC gating conditions**
-   (`hung20gg/NEU-ESC`, Apache-2.0) so the fallback is on disk and ready if the agreement
-   stalls. Record the acceptance date. Do the same for `sonlam1102/multilevel_sentiment_vietnamese`
-   (MIT) only if a secondary corpus is actually needed.
+   (gitignored), settle the label encoding per gate G2 — the author's answer plus the blind
+   audit of delivered files ([experiment-blueprint.md](experiment-blueprint.md) §3; the two
+   pre-registered hypotheses are in [label-semantics-evidence.md](label-semantics-evidence.md)
+   §7; note the author's public README documents no encoding, so the audit is mandatory, not
+   optional) — then run `vfi prepare-data` → `vfi train` → `vfi evaluate` per Phase 1 protocol.
+3. **In parallel, create a HF account and accept the NEU-ESC gate**
+   (`hung20gg/NEU-ESC`, Apache-2.0; login + click-accept, auto-approved) so the fallback is on
+   disk and ready if the agreement stalls. Record the acceptance date. Do the same for
+   `sonlam1102/multilevel_sentiment_vietnamese` (MIT) only if a secondary corpus is actually needed.
 4. **Optional (low priority):** request SA-VLSP2016 via the VLSP2016 User Agreement
    (https://vlsp.org.vn/resources-vlsp2016, email `vlsp.resources@gmail.com`) — correct
    3-class schema, different domain.
@@ -75,13 +85,23 @@ sentiment classification (positive / neutral / negative) on student feedback. I 
 like to request the UIT-VSFC corpus (v1.0) for this research.
 
 Could you please send me the corpus user agreement to sign? If convenient, I would
-also appreciate answers to two small questions:
+also appreciate answers to three small questions (so I can configure my data loader
+exactly to your specification):
 
-1. Once the agreement is signed, may I obtain the data through your group's Hugging
-   Face upload (uitnlp/vietnamese_students_feedback), or should the corpus be delivered
-   separately?
-2. Could you confirm the integer label order used in sentiments.txt (e.g., whether
-   0 = positive or 0 = negative)? Public mirrors currently disagree.
+1. In the distributed train/validation/test sentiment files (sentiments.txt), what is
+   the exact integer-to-sentiment mapping? Specifically, which integer (0, 1, or 2)
+   denotes "negative", which "neutral", and which "positive"?
+2. Two public Hugging Face sources appear to encode these labels differently, and I
+   would like to know which (if either) matches your raw files: the SEACrowd loader
+   (SEACrowd/uit_vsfc) declares the class order ["positive", "negative", "neutral"],
+   which would mean 0=positive, 1=negative, 2=neutral; your group's own dataset card
+   (uitnlp/vietnamese_students_feedback) states the values are "0 (negative), 1
+   (neutral) and 2 (positive)". Are both of these correct interpretations of your raw
+   sentiments.txt files, or is one of them mislabeled?
+3. Is signing the corpus user agreement (requested via kietnv@uit.edu.vn) the required
+   and sufficient step to obtain UIT-VSFC for non-commercial research? And once the
+   agreement is signed, may the data be obtained through your group's Hugging Face
+   upload (uitnlp/vietnamese_students_feedback), or is a separate delivery used?
 
 I commit to: citing the KSE 2018 UIT-VSFC paper in all derived work; using the corpus
 only for this non-commercial educational research; not redistributing the raw data;
@@ -122,6 +142,7 @@ learning notes, never as results.
 
 - [ ] Date agreement email sent; reply received (yes/no, date)
 - [ ] Agreement signed and returned; data received (date, sha256 per split)
-- [ ] Label order verified against author's README (0/1/2 mapping recorded)
+- [ ] Label order settled (G2): author's answer recorded AND blind audit passed; which
+      pre-registered hypothesis held (label-semantics-evidence.md §7), mapping corrected if H1
 - [ ] Fallback activated? (NEU-ESC accepted on HF: date) — used for pipeline bring-up only
 - [ ] Final dataset for Phase 2 experiments: ____________

@@ -10,6 +10,13 @@ Companion documents:
 
 - Comparison table (one row per candidate): [dataset-license-matrix.md](dataset-license-matrix.md)
 - Recommendation, contingencies, and owner actions: [dataset-acquisition-plan.md](dataset-acquisition-plan.md)
+- UIT-VSFC raw-label-encoding evidence trail: [label-semantics-evidence.md](label-semantics-evidence.md)
+
+Status labels (USABLE NOW / PERMISSION REQUIRED / REJECTED / NOT EVALUATABLE) name each
+candidate's **access condition**; definitions are in
+[dataset-license-matrix.md](dataset-license-matrix.md) §Terminology. "USABLE NOW" always
+means "subject to its stated access gate" and never certifies rights over underlying
+user-generated source data — residual risk is recorded per candidate.
 
 ## Evidence legend and method
 
@@ -29,13 +36,13 @@ treated as evidence of usage rights.
 
 | # | Candidate | Domain | Sentiment classes | Verdict |
 |---|-----------|--------|-------------------|---------|
-| 1 | UIT-VSFC | Student feedback (surveys) | 3 (exact match) | **PERMISSION REQUIRED** (primary recommendation) |
-| 2 | NEU-ESC | University forums / FB groups | 4 (Neutral/Pos/Neg/Toxic) | **USABLE NOW** (with documented caveats) |
-| 3 | sonlam1102/multilevel_sentiment_vietnamese | E-commerce product reviews | 5-level (collapsible to 3) | **USABLE NOW** (small, cross-domain) |
-| 4 | UIT-ViSFD | Smartphone feedback (e-commerce) | 3 polarities x 10 aspects (ABSA) | **PERMISSION REQUIRED** (research-use statement, no formal license) |
-| 5 | SA-VLSP2016 | Tech forum / news / FB comments | 3 + USELESS | **PERMISSION REQUIRED** (signed user agreement) |
-| 6 | UIT-VSMEC | Social media | 6 emotions (no sentiment classes) | **PERMISSION REQUIRED** + poor label fit |
-| 7 | UIT-ViOCD | E-commerce product reviews | Complaint vs non-complaint | **PERMISSION REQUIRED** + wrong task |
+| 1 | UIT-VSFC | Student feedback (surveys) | 3 (exact match) | **PERMISSION REQUIRED (author agreement via `kietnv@uit.edu.vn`)** — primary recommendation |
+| 2 | NEU-ESC | University forums / FB groups | 4 (Neutral/Pos/Neg/Toxic) | **USABLE NOW (subject to HF gate: login + click-accept)** — with residual rights risk and documented caveats |
+| 3 | sonlam1102/multilevel_sentiment_vietnamese | E-commerce product reviews | 5-level (collapsible to 3) | **USABLE NOW (subject to HF gate: login + click-accept)** (small, cross-domain) |
+| 4 | UIT-ViSFD | Smartphone feedback (e-commerce) | 3 polarities x 10 aspects (ABSA) | **PERMISSION REQUIRED (author research-use statement, no license file)** |
+| 5 | SA-VLSP2016 | Tech forum / news / FB comments | 3 + USELESS | **PERMISSION REQUIRED (signed VLSP2016 User Agreement)** |
+| 6 | UIT-VSMEC | Social media | 6 emotions (no sentiment classes) | **PERMISSION REQUIRED (author agreement)** + poor label fit |
+| 7 | UIT-ViOCD | E-commerce product reviews | Complaint vs non-complaint | **PERMISSION REQUIRED (author agreement)** + wrong task |
 | 8 | NTC-SCV | Blog/review comments | Binary (no neutral) | **REJECTED** |
 | 9 | anotherpolarbear/vietnamese-sentiment-analysis | Phone-retailer reviews (apparent) | 1-5 stars | **REJECTED** |
 | 10 | thnhan3/vietnamese-students-feedback-synthetic | Synthetic student feedback | Neutral only | **REJECTED** as a corpus (synthetic derivative) |
@@ -47,7 +54,7 @@ treated as evidence of usage rights.
 
 ### A1. UIT-VSFC — Vietnamese Students' Feedback Corpus
 
-**Status: PERMISSION REQUIRED. Primary recommendation for Phase 2.**
+**Status: PERMISSION REQUIRED (author agreement via `kietnv@uit.edu.vn`). Primary recommendation for Phase 2.**
 
 - **Publisher / maintainer:** Kiet Van Nguyen and colleagues, UIT NLP group (University of
   Information Technology, VNU-HCM). **[VERIFIED FACT]**
@@ -81,12 +88,17 @@ treated as evidence of usage rights.
   topic. **[VERIFIED FACT]**
 - **Size and splits:** 16,175 rows total; official splits train 11,426 / validation 1,583 /
   test 3,166 (per the `uitnlp` card). **[VERIFIED FACT]**
-- **Label-encoding inconsistency across mirrors (important):** the SEACrowd loader declares
-  `SENTIMENT_LABEL_CLASSES = ["positive", "negative", "neutral"]` (0=positive) **[VERIFIED
-  FACT]**, while the `uitnlp` card documents sentiment labels as "0 negative, 1 neutral,
-  2 positive" **[VERIFIED FACT]**. The two mirrors disagree; Phase 1's caveat that the raw
-  `0/1/2` encoding must be checked against the author's README after access is therefore
-  even more important. See [dataset-acquisition-plan.md](dataset-acquisition-plan.md).
+- **Label-encoding inconsistency across mirrors (important, unresolved):** the SEACrowd
+  loader declares `SENTIMENT_LABEL_CLASSES = ["positive", "negative", "neutral"]` (0=positive)
+  **[VERIFIED FACT]**, while the authors' own layer (`uitnlp` card prose, the embedded
+  datasets-library script, and the served parquet features) consistently says 0=negative,
+  1=neutral, 2=positive **[VERIFIED FACT]**. Both loaders consume the *identical* Google Drive
+  files with unmodified integer passthrough, so one of them systematically mislabels every
+  row; the author's README documents no encoding at all, and the SEACrowd PR trail contains
+  no verification discussion. Full evidence trail, weighting argument, and pre-registered
+  audit hypotheses: [label-semantics-evidence.md](label-semantics-evidence.md). Resolution
+  stays with the author's answer + the blind audit of delivered files (G2). See
+  [dataset-acquisition-plan.md](dataset-acquisition-plan.md).
 - **Annotation quality:** inter-annotator agreement > 91% for sentiment and > 71% for topic;
   Maximum Entropy baseline ~88% sentiment F1 — author-reported, as documented in the Phase 1
   investigation (`git show 95f7687:docs/dataset-uit-vsfc.md`). **[VERIFIED FACT as to what
@@ -101,7 +113,9 @@ treated as evidence of usage rights.
 
 ### A2. NEU-ESC — Vietnamese Educational Sentiment Classification
 
-**Status: USABLE NOW (with caveats). Best immediate fallback: permissive license + education domain.**
+**Status: USABLE NOW (subject to its stated access gate: HF login + click-accept,
+auto-approved). Best immediate fallback: permissive license + education domain — with a
+residual rights risk (below) and documented quality caveats.**
 
 - **Publisher / maintainer:** HF user `hung20gg`, whose handle matches first author Mai Phan
   Quoc Hung; card citation authors match the paper author list (Nguyen Quang Hung, Mai Phan
@@ -115,10 +129,23 @@ treated as evidence of usage rights.
   Nguyen Tuan Long, "NEU-ESC: A Vietnamese Dataset for Educational Sentiment Classification
   and Topic Classification", arXiv:2506.23524 (2025, preprint; no peer-reviewed venue
   listed). **[VERIFIED FACT]**
-- **License:** HF card license tag: **`apache-2.0`**. **[VERIFIED FACT]** The paper contains
-  no separate license statement. **[VERIFIED FACT — absence]** Note Apache-2.0's patent and
-  attribution terms; keep the NOTICE/citation.
-- **Access mechanism:** gated HF download (accept conditions). **[VERIFIED FACT]**
+- **License:** HF card license tag: **`apache-2.0`** (re-verified via HF API 2026-11-07).
+  **[VERIFIED FACT]** The paper contains no separate license statement. **[VERIFIED FACT —
+  absence]** Note Apache-2.0's patent and attribution terms; keep the NOTICE/citation.
+- **Residual rights risk (explicit):** the `apache-2.0` tag is the *uploader's* grant; it does
+  not demonstrate that the uploader holds rights in the underlying user-generated content.
+  NEU-ESC's source is university Facebook-group and community-forum UGC, with additional
+  scraping from unmoderated forums (XamVN, Voz) to capture harmful content (paper §3.1) —
+  i.e., third-party social-media text whose original authors never licensed it anywhere. For
+  this project's non-commercial, non-redistributing, aggregate-only use the residual risk is
+  judged acceptable, but it is recorded so the posture is explicit, and NEU-ESC-derived
+  artifacts must never redistribute raw text. **[ASSUMPTION: risk acceptance, owner-approved
+  as part of this plan]**
+- **Access mechanism:** gated HF download. Gate type re-verified 2026-11-07: HF API reports
+  `gated: "auto"` — login + click-accept, granted automatically (no application form, no
+  owner review); the page notice reads verbatim: *"You need to agree to share your Hugging
+  Face information to access this dataset ... you have to accept the conditions to access its
+  files and content."* **[VERIFIED FACT]**
 - **Redistribution:** Apache-2.0 permits redistribution with license/ac NOTICE preserved.
   **[VERIFIED FACT — standard license text; card imposes no extra restriction]**
 - **Commercial vs non-commercial:** Apache-2.0 permits both. **[VERIFIED FACT]**
@@ -155,7 +182,7 @@ treated as evidence of usage rights.
 
 ### A3. sonlam1102/multilevel_sentiment_vietnamese
 
-**Status: USABLE NOW (small and cross-domain). Cleanest license evidence among alternatives.**
+**Status: USABLE NOW (subject to its stated access gate: HF login + click-accept, auto-approved). Small and cross-domain; cleanest license evidence among alternatives.**
 
 - **Publisher / maintainer:** HF user `sonlam1102`; Son T. Luu is one of the authors of the
   cited paper, i.e., the uploader appears to be a paper author. **[VERIFIED FACT — name
@@ -168,7 +195,8 @@ treated as evidence of usage rights.
   SoMeT_21, IOS Press, 2021. The card asks users to cite this publication. **[VERIFIED FACT]**
 - **License:** HF card license tag: **`mit`**. **[VERIFIED FACT]** No README-level license
   text beyond the tag was observed; the citation request accompanies it.
-- **Access mechanism:** gated (HF login + accept conditions). **[VERIFIED FACT]**
+- **Access mechanism:** gated (HF login + accept conditions; HF API `gated: "auto"` —
+  click-accept, granted automatically, re-verified 2026-11-07). **[VERIFIED FACT]**
 - **Redistribution:** MIT permits use, modification, redistribution (retain the license
   notice). **[VERIFIED FACT — standard license semantics]**
 - **Commercial vs non-commercial:** permitted under MIT. **[VERIFIED FACT]**
@@ -187,7 +215,7 @@ treated as evidence of usage rights.
 
 ### A4. UIT-ViSFD — Vietnamese Smartphone Feedback Dataset
 
-**Status: PERMISSION REQUIRED (research-use statement, but no formal license).**
+**Status: PERMISSION REQUIRED (author research-use statement — no license file; download is immediate but the rights posture is weaker than a formal grant).**
 
 - **Publisher / maintainer:** Luc Phan Luong et al., UIT. Official repo:
   https://github.com/LuongPhan/UIT-ViSFD. **[VERIFIED FACT]**
@@ -219,7 +247,7 @@ treated as evidence of usage rights.
 
 ### A5. SA-VLSP2016 — VLSP 2016 Shared Task on Sentiment Analysis
 
-**Status: PERMISSION REQUIRED (signed user agreement).**
+**Status: PERMISSION REQUIRED (signed VLSP2016 User Agreement — fill + sign PDF + email).**
 
 - **Publisher / maintainer:** VLSP consortium (Vietnamese Language and Speech Processing).
   **[VERIFIED FACT]**
@@ -252,7 +280,7 @@ treated as evidence of usage rights.
 
 ### A6. UIT-VSMEC — Vietnamese Social Media Emotion Corpus
 
-**Status: PERMISSION REQUIRED + poor label fit.**
+**Status: PERMISSION REQUIRED (author agreement) + poor label fit.**
 
 - **Publisher / maintainer:** Vong Anh Ho, Duc-Vu Nguyen, Kiet Van Nguyen, Ngan Luu-Thuy
   Nguyen et al. (UIT). **[VERIFIED FACT from arXiv:1911.09339 abstract]**
@@ -276,7 +304,7 @@ treated as evidence of usage rights.
 
 ### A7. UIT-ViOCD — Vietnamese Open-domain Complaint Detection
 
-**Status: PERMISSION REQUIRED + wrong task.**
+**Status: PERMISSION REQUIRED (author agreement) + wrong task.**
 
 - **Publisher / maintainer:** Nhung Thi-Hong Nguyen et al. (incl. Kiet Van Nguyen), UIT.
   **[VERIFIED FACT from arXiv:2104.11969]**
@@ -368,11 +396,16 @@ etc.) have either no license field or no provenance; none qualify under the rule
 1. **UIT-VSFC remains the best-fit dataset and remains blocked on its official agreement
    channel** (unchanged from Phase 1; re-verified 2026-11-07). Its status did not improve:
    both HF mirrors still say `license: unknown`, including the authors' own `uitnlp` org
-   upload.
-2. **Two genuinely licensed, immediately accessible alternatives exist**, but neither is a
-   perfect match: **NEU-ESC** (Apache-2.0, education domain, 4-class schema, no documented
-   annotation protocol) and **sonlam1102/multilevel_sentiment_vietnamese** (MIT, e-commerce,
-   5-level, ~6k rows).
+   upload (which is openly downloadable on HF — accessibility is not authorization). The raw
+   label encoding is additionally **UNRESOLVED**: see
+   [label-semantics-evidence.md](label-semantics-evidence.md) — both mirrors consume the same
+   raw files, their declarations contradict each other, and the evidential balance favors the
+   authors' own layer (0=negative) while SEACrowd's reorder shows no verification trail.
+2. **Two genuinely licensed, gate-accessible alternatives exist**, but neither is a perfect
+   match: **NEU-ESC** (Apache-2.0, education domain, 4-class schema, no documented annotation
+   protocol, residual rights risk over scraped UGC — gate: HF login + click-accept) and
+   **sonlam1102/multilevel_sentiment_vietnamese** (MIT, e-commerce, 5-level, ~6k rows — gate:
+   HF login + click-accept).
 3. **The corpus user agreement is the bottleneck, not discovery** — every high-quality
    Vietnamese sentiment corpus from the UIT/VLSP ecosystem is agreement-gated. The
    recommended strategy (see [dataset-acquisition-plan.md](dataset-acquisition-plan.md)) is
