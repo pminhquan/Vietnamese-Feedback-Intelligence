@@ -50,12 +50,14 @@ gate below is closed by the owner.
 
 ## Answers to the twelve readiness questions
 
-1. **Which dataset can we use?** None is usable today without permission.
-   Primary target remains **UIT-VSFC** (best domain/label/schema fit; author
-   agreement required). Best USABLE-NOW alternative is **NEU-ESC**
-   (Apache-2.0, education domain, 33k items) with documented caveats: 4-class
-   schema, 69% neutral skew, no published annotation protocol. Details:
-   `dataset-landscape.md`, `dataset-license-matrix.md`.
+1. **Which dataset can we use?** No PERMISSION-REQUIRED dataset is usable
+   today — the primary target **UIT-VSFC** (best domain/label/schema fit)
+   still awaits its signed author agreement. Best USABLE NOW alternative
+   (subject to its stated access gate: HF login + click-accept) is
+   **NEU-ESC** (Apache-2.0, education domain, 33k items) with documented
+   caveats: 4-class schema, 69% neutral skew, no published annotation
+   protocol. Status classes and details: `dataset-landscape.md`,
+   `dataset-license-matrix.md`.
 2. **Can we obtain UIT-VSFC under author conditions?** Yes, via email to
    `kietnv@uit.edu.vn` and signing the corpus user agreement; the condition
    was re-verified unchanged on 2026-11-07 (`dataset-acquisition-plan.md`).
@@ -110,6 +112,17 @@ gate below is closed by the owner.
    documented mapping follows SEACrowd and is now flagged
    [UNVERIFIED AGAINST AUTHOR SOURCE] — reported to the Phase 1 maintainer,
    not edited here.
+
+   Hardening pass 2026-11-07 (`label-semantics-evidence.md`): both mirrors
+   consume the identical nine Google Drive files with unmodified integer
+   passthrough, so their contradictory declarations mean one mirror
+   systematically mislabels every row; SEACrowd's label reorder (PR #246)
+   landed with zero verification discussion, while the authors' own org
+   carries three mutually consistent artifacts (card prose, migrated loader
+   `ClassLabel`, served parquet) favoring 0=negative. That evidential
+   balance is recorded as a planning prior only; the audit hypotheses are
+   pre-registered (§7 of that document) and resolution stays with the
+   author's answer + the blind audit (gate G2).
 2. **Segmenter licenses.** Agent outputs disagreed. Primary-source check by
    the orchestrator: VnCoreNLP `LICENSE.md` = **GPLv3**;
    `underthesea` `LICENSE` (main) = **Apache-2.0**. Resolution: underthesea
@@ -125,10 +138,13 @@ gate below is closed by the owner.
 ## Smallest scientifically valuable experiment (when G1–G5 close)
 
 Fine-tune `vinai/phobert-base` ONCE — seed 42, pre-declared recipe (LR 3e-5,
-batch 16 with accumulation, ≤5 epochs, early stopping on validation
-macro-F1) — then evaluate it and the Phase 1 TF-IDF+LogReg winner on
-validation, then once each on test, with identical metric code and full
-provenance. Claims phrased as single-run ("in this run"). Full matrix with
+effective batch 32 via micro-batch 8 × grad-accum 4, OOM ladder
+8×4→4×8→2×16→1×32 pre-declared — no batch size is guaranteed before
+measurement; ≤5 epochs, early stopping on validation macro-F1) — then
+evaluate it, `majority`, and the Phase 1 TF-IDF+LogReg winner on validation,
+then once each on test (3 test evaluations), with identical metric code and
+full provenance. Implementation contract: `pilot-experiment-plan.md`. Claims
+phrased as single-run ("in this run"). Full matrix with
 search and multi-seed variance only if the owner wants stronger claims
 (`experiment-matrix.md` E0–E9).
 
@@ -136,7 +152,9 @@ search and multi-seed variance only if the owner wants stronger claims
 
 1. G1–G5 closed with evidence.
 2. E0 synthetic smoke test green (no reported metrics).
-3. All four models evaluated per protocol; test evaluated exactly once each.
+3. All three mandatory M1 models evaluated per protocol (majority,
+   TF-IDF+LogReg, one PhoBERT fine-tune; XLM-R is the declared fallback
+   only); test evaluated exactly once per final configuration.
 4. Reproducibility record complete for every run.
 5. Error analysis with indexed examples (no raw student text).
 6. Comparison report states per-seed variance and restricted claims.
@@ -178,3 +196,32 @@ VnCoreNLP/underthesea licenses, split sizes, hardware) against primary
 sources and resolved the conflicts above. No dataset, weight, or secret was
 downloaded; no training was run; no Phase 1 file was modified; PR #1 was not
 touched.
+
+## Hardening pass (2026-11-07, same PR, second program round)
+
+An independent hardening round reviewed and extended this package:
+
+- **Probe privacy holes found AND fixed.** A red-team agent reproduced five
+  real holes in `hardware_probe.py` end-to-end (default-run temp-file
+  persistence, CWD-relative repo refusal, `\\?\`/trailing-space/UNC path
+  bypasses, environment-spoofed sanitization, argparse echo of user paths);
+  all five are fixed with regression tests, and the strict-xfail pins were
+  converted to passing tests. Guarantees and remaining limits are documented
+  in `hardware-probe-guide.md`.
+- **Offline readiness gate added.** `tools/phase2_readiness/readiness_gate.py`
+  checks an owner-prepared evidence JSON against the eleven readiness
+  categories (dataset provenance, label verification, splits, leakage
+  preflight, Phase 1 integrity, checkpoint/license, tokenization contract,
+  dependency plan, compute, artifact/privacy controls, owner approval) and
+  fails closed to BLOCKED; it is an operational checklist — it does not
+  validate legal rights or model quality.
+- **Pilot plan finalized.** `pilot-experiment-plan.md` is the
+  implementation-level M1 contract: exactly three models (majority,
+  TF-IDF+LogReg, one PhoBERT), no hyperparameter search, seed 42, label
+  audit gate blocking every real-data run, pre-declared OOM ladder,
+  single-touch test evaluation with a ledger.
+- **Phase 1 handoff prepared.** `handoff-phase1-findings.md` is the
+  copy-ready handoff for the Phase 1 maintainer (label conflict + confirmed
+  issues + new red-team findings; Phase 1 reviewed read-only only).
+- Full suite after hardening: 105 tests passing, ruff clean, zero files
+  changed outside the authorized paths.

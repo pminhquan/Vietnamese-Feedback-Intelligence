@@ -76,14 +76,17 @@ câu trả lời của người chưa xử lý dữ liệu tiếng Việt thật
 
 ### Q5. "Nhãn của dataset gốc là số nguyên — bạn xử lý mapping như thế nào?"
 
-**Câu trả lời tốt cần bao phủ:** raw mapping của loader tham chiếu là
-`0=positive, 1=negative, 2=neutral` (từ khai báo `ClassLabel` của loader
-SEACrowd); VFI chuyển ngay khi tải sang không gian canonical một chỗ duy
-nhất: `negative=0, neutral=1, positive=2` (`CANONICAL_LABELS`,
-`RAW_SENTIMENT_TO_LABEL` trong `vfi/data/loading.py`) — toàn bộ code sau đó
-không phải biết mapping gốc. Và điểm cộng lớn: khi có dữ liệu thật, **kiểm
-tra tay vài dòng với README của tác giả** trước khi tin mapping — đây là
-caveat đã ghi trong `docs/dataset-uit-vsfc.md`.
+**Câu trả lời tốt cần bao phủ:** loader Phase 1 đang hard-code mapping
+`0=positive, 1=negative, 2=neutral` (theo khai báo `ClassLabel` của loader
+SEACrowd) — nguồn này **chưa được xác minh** và mâu thuẫn với card của chính
+nhóm tác giả; cân bằng chứng nghiêng về `0=negative` làm *planning prior*,
+nhưng trạng thái là **UNRESOLVED** và gate G2 quyết định (xem
+`label-semantics-evidence.md`). VFI chuyển ngay khi tải sang không gian
+canonical một chỗ duy nhất: `negative=0, neutral=1, positive=2`
+(`CANONICAL_LABELS`, `RAW_SENTIMENT_TO_LABEL` trong `vfi/data/loading.py`)
+— toàn bộ code sau đó không phải biết mapping gốc. Và điểm cộng lớn: khi có
+dữ liệu thật, **kiểm tra tay vài dòng với README của tác giả** trước khi tin
+mapping — đây là caveat đã ghi trong `docs/dataset-uit-vsfc.md`.
 
 **Câu trả lời sai phổ biến:** "Có mapping sẵn trong code" — không nhớ chiều
 mapping gốc, không biết điểm rủi ro là một nhãn lệch 1 bước làm toàn bộ kết
@@ -359,10 +362,11 @@ minh bằng `git log` trước khi kể):**
    phải sửa + pin version ruff (commit `fix(lint): satisfy ruff 0.17 on
    models package...`). Bài học: công cụ bỏ qua "im lặng" một thư mục còn
    nguy hiểm hơn công cụ báo lỗi.
-2. **Mapping nhãn lệch chiều:** phát hiện raw label encoding của UIT-VSFC
-   là `0=positive` trong khi trực giác là `0=negative` — được xử lý bằng
-   remap một chỗ có tài liệu + caveát "kiểm tra tay vài dòng với README
-   tác giả trước khi tin".
+2. **Mapping nhãn lệch chiều:** phát hiện loader khai báo raw mapping
+   `0=positive` (theo SEACrowd) trong khi trực giác là `0=negative` — và hai
+   nguồn công khai thực ra mâu thuẫn nhau, còn UNRESOLVED (xem
+   `label-semantics-evidence.md`); được xử lý bằng remap một chỗ có tài
+   liệu + caveát "kiểm tra tay vài dòng với README tác giả trước khi tin".
 3. **Blocker dataset:** không thể tự ý tải UIT-VSFC vì license phải ký thỏa
    thuận — cách xử lý là ghi verdict BLOCKED có bằng chứng nguồn, làm hết
    code trên synthetic fixtures, không bịa số.

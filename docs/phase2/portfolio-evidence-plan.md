@@ -58,9 +58,9 @@
 | # | Bằng chứng | Định nghĩa hoàn thành | Ai sở hữu |
 | --- | --- | --- | --- |
 | 1 | `training_report.json` trên dữ liệu thật (trial TF-IDF + majority) | File nằm trong `reports/artifacts/`, có config hash + fingerprint + seed; owner giải thích được từng trường | OWNER chạy; AGENT viết schema |
-| 2 | Bảng so sánh trung thực baseline vs PhoBERT | Cùng split, cùng macro-F1 protocol; 2–3 seed cho PhoBERT, báo mean ± std; bảng trong `reports/` + một đoạn owner viết "đọc bảng này nghĩa là gì" | OWNER viết đoạn đọc bảng |
+| 2 | Bảng so sánh trung thực baseline vs PhoBERT | Cùng split, cùng macro-F1 protocol; 3 seed ({42, 7, 2026}) cho PhoBERT, báo mean ± std; bảng trong `reports/` + một đoạn owner viết "đọc bảng này nghĩa là gì" | OWNER viết đoạn đọc bảng |
 | 3 | Confusion matrix + error analysis 15 mẫu sai | Mỗi mẫu: đầu vào rút gọn, dự đoán vs thật, giả thuyết bằng lời owner; tối thiểu 1 giả thuyết được kiểm chứng bằng mini behavioral test (kiểu CheckList: bất biến "không + tính từ") | OWNER 100% phần giả thuyết; AGENT chỉ trích xuất CSV |
-| 4 | So sánh seed variance | 3 seed (ví dụ 42, 7, 2026), bảng macro-F1 mean ± std kèm nhận xét biến động fine-tune vs TF-IDF | OWNER diễn giải; AGENT chạy lặp |
+| 4 | So sánh seed variance | 3 seed {42, 7, 2026} (chốt trước, không bỏ seed), bảng macro-F1 mean ± std kèm nhận xét biến động fine-tune vs TF-IDF | OWNER diễn giải; AGENT chạy lặp |
 | 5 | Bảng latency theo protocol Phase 1 | `measure_latency` (batch 1, 10 warmup, 100 timed, seed) cho TF-IDF CPU / PhoBERT PyTorch / PhoBERT ONNX; protocol ghi kèm JSON | OWNER chạy + diễn giải; AGENT viết script export |
 | 6 | Ablation nhỏ có tài liệu | Ví dụ: with/without word segmentation; with/without warmup — mỗi ablation 1 đoạn "tại sao làm, kết quả, quyết định" | OWNER chốt kết luận |
 | 7 | Learning curve + early stopping | Bảng train/val theo epoch + epoch dừng; owner chọn patience và ghi lý do | OWNER chọn; AGENT vẽ curve |
@@ -83,7 +83,7 @@ hoặc trong repo + owner trả lời được câu hỏi "vì sao" của chính
 >    validation macro-F1 và chỉ chạm test một lần."
 > 2. "Phase 1 là baseline kỷ luật — MajorityBaseline và TF-IDF + Logistic
 >    Regression với bộ test bảo vệ từng quyết định thiết kế, CI xanh — và
->    Phase 2 đang mở rộng sang fine-tune PhoBERT trên cùng split, cùng
+>    Phase 2 sẽ mở rộng sang fine-tune PhoBERT trên cùng split, cùng
 >    metric để so sánh trung thực."
 > 3. "Điểm tôi tâm đắc nhất là sự trung thực của quy trình: khi license
 >    dataset chưa xác minh được, dự án ghi rõ BLOCKED kèm bằng chứng thay
@@ -100,7 +100,7 @@ chuyên nghiệp.)*
 >    and a single touch on the test split."
 > 2. "Phase 1 ships disciplined classical baselines (majority class and
 >    TF-IDF + Logistic Regression) with tests that protect each design
->    decision and a green CPU-only CI; Phase 2 extends this to fine-tuning
+>    decision and a green CPU-only CI; Phase 2 will extend this to fine-tuning
 >    PhoBERT on the same splits and metrics for an honest comparison."
 > 3. "What I value most is process honesty: while the dataset license was
 >    unverified, the project records a documented BLOCKED verdict with
