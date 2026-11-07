@@ -26,13 +26,15 @@ LIMITATIONS (read before trusting a PASS)
 - Self-declared checkboxes are rejected by design (e.g. ``license_status:
   "ok"`` is not license evidence); concrete evidence fields are required
   instead, and placeholder statements ("unknown", "ok") are not accepted.
-- Present-but-incomplete evidence (a required field missing or empty) yields
-  UNKNOWN, never PASS.
+- Present-but-incomplete evidence (a required field missing, empty, or a
+  ``TODO:`` placeholder) yields UNKNOWN, never PASS.
 
 USAGE
 - ``readiness_gate.py --schema``
-  Print a filled template evidence file (valid JSON; it doubles as a minimal
-  PASSing example) to stdout, then exit 0. Takes precedence over ``--input``.
+  Print an INCOMPLETE onboarding template (valid JSON; completed-action
+  claims are ``TODO:`` placeholders or not-done flags, so feeding it back
+  through ``--input`` does NOT pass) to stdout, then exit 0. Takes
+  precedence over ``--input``.
 - ``readiness_gate.py --input PATH [--json]``
   Evaluate the evidence file. Human-readable checklist on stdout by default;
   ``--json`` prints the machine-readable summary (schema_version,
@@ -47,7 +49,11 @@ Top level: optional ``schema_version`` (must be 1) plus the 11 required
 category objects listed below. Unknown top-level keys are rejected, and so are
 unknown fields inside a category. Wrong types, out-of-range numbers, invalid
 40-hex SHAs and non-ISO-8601 dates are BLOCKED; a required field that is
-absent or empty yields UNKNOWN (evidence insufficient).
+absent, empty, or a ``TODO:`` placeholder yields UNKNOWN (evidence
+insufficient). Placeholder matching is case-insensitive ("todo", "TODO: x",
+"todo x"). Values inside free-form lists and maps (gitignore pattern
+entries, extra pinned-version entries) are not placeholder-scanned; the
+load-bearing slots in those structures are validated independently.
 
 1. dataset_provenance: source_url (string), license_statement (string),
    access_condition_class (author_agreement_signed | gated_click_accept |
@@ -65,9 +71,16 @@ absent or empty yields UNKNOWN (evidence insufficient).
    fingerprint_algorithm (string; warning when it is not sha256).
 4. leakage_preflight: exact_match_planned (bool, must be true) and
    near_duplicate_method (string) + near_duplicate_threshold (number in 0-1).
-   Both checks are required: exact match alone misses R-06 near-duplicates.
+   Planning alone is NOT readiness: exact_match_executed and
+   near_duplicate_executed (bools) must be true, each backed by a
+   *_report_reference string, and unresolved_conflicts (int) must be zero;
+   anything executed-but-unreferenced or planned-only is UNKNOWN, and
+   unresolved cross-split conflicts BLOCK. Both check families are required:
+   exact match alone misses R-06 near-duplicates.
 5. phase1_integrity: phase1_head_sha (40-hex), baseline_evidence_reference
-   (string), test_set_untouched (bool, must be true).
+   (string) plus baseline_evidence_sha256 (64-hex integrity hash of the
+   referenced artifact; without it the reference alone is UNKNOWN),
+   test_set_untouched (bool, must be true).
 6. model_checkpoint: checkpoint_id (string), revision_sha (40-hex),
    license_name (string), weights_format (safetensors passes; pickle_bin is
    BLOCKED per R-01), checksum_recorded (bool, must be true) plus
@@ -81,7 +94,10 @@ absent or empty yields UNKNOWN (evidence insufficient).
 9. compute_feasibility: device (cpu | cuda), vram_gb (positive number,
    required when device is cuda), oom_recovery_plan (string).
 10. artifact_privacy_controls: gitignore_patterns (list of strings; must
-    contain ``*.bin`` and ``*.pt`` to PASS), reports_pii_policy (string).
+    contain ``*.bin`` and ``*.pt``), reports_pii_policy (string), and
+    verified_against_repository (bool; a declared pattern list that has not
+    been checked against the actual repository .gitignore is UNKNOWN, not
+    PASS).
 11. owner_approval: approver (string), approval_date (ISO-8601, must not be
     in the future), scope_statement (string). A missing or non-passing owner
     approval forces the overall verdict to BLOCKED regardless of everything
@@ -96,7 +112,9 @@ PRIVACY / SAFETY
 
 EXTENDING
 - Add the category to CATEGORY_ORDER, a field table to FIELD_SPECS, a check
-  function registered in CHECKS, and a filled example to build_template().
+  function registered in CHECKS, and an honest, INCOMPLETE entry to
+  build_template() (``TODO:`` placeholders / not-done flags only; passing
+  fixtures live only in the test suite).
 """
 
 from __future__ import annotations
@@ -131,8 +149,20 @@ PHOBERT_MAX_LENGTH = 256
 REQUIRED_GITIGNORE_PATTERNS = ("*.bin", "*.pt")
 REQUIRED_PINNED_PACKAGES = ("torch", "transformers", "segmenter")
 PLACEHOLDER_LICENSE_STATEMENTS = frozenset(
-    {"unknown", "ok", "yes", "true", "none", "n/a", "na", "tbd"}
+    {"unknown", "ok", "yes", "true", "none", "n/a", "na", "tbd", "todo", "tobedone"}
 )
+#: Values matching this prefix (case-insensitive, with or without a colon)
+#: are placeholders, not evidence: any text field set to "TODO: ..." /
+#: "todo ..." is treated as missing (UNKNOWN), so onboarding templates
+#: cannot accidentally pass as completed evidence packages.
+PLACEHOLDER_PREFIX = "TODO:"
+
+
+def _is_placeholder(value: str) -> bool:
+    """Case-insensitive placeholder match: 'TODO: x', 'todo x', 'TODO'."""
+    normalized = value.strip().lower()
+    return normalized == "todo" or normalized.startswith("todo:") or normalized.startswith("todo ")
+
 
 HEX40_RE = re.compile(r"[0-9a-fA-F]{40}")
 SEMVER_RE = re.compile(r"\d+\.\d+(\.\d+)?([+\-][0-9A-Za-z.\-+]+)?")
@@ -199,12 +229,18 @@ FIELD_SPECS: dict[str, dict[str, FieldSpec]] = {
     },
     "leakage_preflight": {
         "exact_match_planned": FieldSpec(KIND_BOOL),
+        "exact_match_executed": FieldSpec(KIND_BOOL),
+        "exact_match_report_reference": FieldSpec(KIND_TEXT, required=False),
         "near_duplicate_method": FieldSpec(KIND_TEXT),
         "near_duplicate_threshold": FieldSpec(KIND_NUMBER),
+        "near_duplicate_executed": FieldSpec(KIND_BOOL),
+        "near_duplicate_report_reference": FieldSpec(KIND_TEXT, required=False),
+        "unresolved_conflicts": FieldSpec(KIND_INT),
     },
     "phase1_integrity": {
         "phase1_head_sha": FieldSpec(KIND_TEXT),
         "baseline_evidence_reference": FieldSpec(KIND_TEXT),
+        "baseline_evidence_sha256": FieldSpec(KIND_TEXT, required=False),
         "test_set_untouched": FieldSpec(KIND_BOOL),
     },
     "model_checkpoint": {
@@ -234,6 +270,7 @@ FIELD_SPECS: dict[str, dict[str, FieldSpec]] = {
     "artifact_privacy_controls": {
         "gitignore_patterns": FieldSpec(KIND_TEXT_LIST),
         "reports_pii_policy": FieldSpec(KIND_TEXT),
+        "verified_against_repository": FieldSpec(KIND_BOOL),
     },
     "owner_approval": {
         "approver": FieldSpec(KIND_TEXT),
@@ -379,6 +416,9 @@ def _collect_field_issues(
         if spec.kind in (KIND_TEXT, KIND_ENUM) and isinstance(value, str) and not value.strip():
             missing.append(f"{name} (empty)")
             continue
+        if spec.kind == KIND_TEXT and isinstance(value, str) and _is_placeholder(value):
+            missing.append(f"{name} (placeholder '{PLACEHOLDER_PREFIX}...' value is not evidence)")
+            continue
         problem = _type_problem(name, value, spec)
         if problem is not None:
             blocked.append(problem)
@@ -436,7 +476,7 @@ def _check_dataset_provenance(fields: dict[str, Any], _evidence: dict[str, Any])
                 "the agreement email date)",
             )
     return _pass(
-        f"provenance complete: source, license statement and access condition '{access}' recorded"
+        f"provenance complete (self-reported, unverified): access condition '{access}' recorded"
     )
 
 
@@ -479,8 +519,8 @@ def _check_label_mapping_verification(
                 f"{LABEL_AGREEMENT_THRESHOLD}, or obtain author confirmation with a quote",
             )
         return _pass(
-            f"blind audit of {sample} lines with agreement rate {rate} "
-            f"(>= {LABEL_AGREEMENT_THRESHOLD}); {pinned}"
+            f"blind audit ({sample} lines, agreement {rate} >= {LABEL_AGREEMENT_THRESHOLD}); "
+            f"{pinned} (self-reported)"
         )
     # method == "author_confirmation": a quote reference is mandatory.
     quote = fields.get("quote_reference", "")
@@ -490,7 +530,7 @@ def _check_label_mapping_verification(
             "quoted statement and where it was given)",
             f"{category}: record the author's quoted label-mapping statement with a reference",
         )
-    return _pass(f"author confirmation with quote reference; {pinned}")
+    return _pass(f"author confirmation with quote reference; {pinned} (self-reported)")
 
 
 @check("split_definition")
@@ -533,9 +573,41 @@ def _check_leakage_preflight(fields: dict[str, Any], _evidence: dict[str, Any]) 
             f"'near_duplicate_threshold' {_clip(threshold)} is outside the 0-1 range",
             f"{category}: record a near-duplicate similarity threshold between 0 and 1",
         )
+    # Planning is not readiness: each check family must have been EXECUTED
+    # with a recorded report reference before training can start.
+    for family in ("exact_match", "near_duplicate"):
+        if fields[f"{family}_executed"] is False:
+            return _unknown(
+                f"the {family.replace('_', '-')} preflight is planned but not executed - "
+                "intentions are not execution evidence",
+                f"{category}: run the {family.replace('_', '-')} preflight and record its "
+                "report reference before declaring training readiness",
+            )
+        reference = fields.get(f"{family}_report_reference", "")
+        if not isinstance(reference, str) or not reference.strip():
+            return _unknown(
+                f"the {family.replace('_', '-')} preflight is marked executed but its "
+                "'report reference' is missing",
+                f"{category}: record where the executed {family.replace('_', '-')} "
+                "report lives (path or identifier)",
+            )
+    unresolved = fields["unresolved_conflicts"]
+    if unresolved < 0:
+        return _blocked(
+            f"'unresolved_conflicts' must not be negative (got {unresolved})",
+            f"{category}: record the number of unresolved cross-split conflicts (0 or more)",
+        )
+    if unresolved > 0:
+        return _blocked(
+            f"{unresolved} unresolved cross-split conflict(s) recorded - leakage conflicts "
+            "must be resolved before training (risk R-06)",
+            f"{category}: resolve or annotate every cross-split conflict, then set "
+            "'unresolved_conflicts' to 0",
+        )
     method = _clip(fields["near_duplicate_method"])
     return _pass(
-        f"exact-match plus near-duplicate ('{method}', threshold {threshold}) preflights planned"
+        f"leakage preflights executed (self-reported): '{method}', threshold {threshold}, "
+        f"{unresolved} unresolved conflicts"
     )
 
 
@@ -556,8 +628,21 @@ def _check_phase1_integrity(fields: dict[str, Any], _evidence: dict[str, Any]) -
             "'test_set_untouched' is false - the Phase 1 test split must remain untouched",
             f"{category}: investigate the test-split violation before any Phase 2 work",
         )
+    baseline_hash = fields.get("baseline_evidence_sha256", "")
+    if not isinstance(baseline_hash, str) or not baseline_hash.strip():
+        return _unknown(
+            "baseline evidence referenced but 'baseline_evidence_sha256' absent - "
+            "the reference is unconfirmed",
+            f"{category}: record the sha256 hash of the referenced baseline metrics artifact",
+        )
+    if not re.fullmatch(r"[0-9a-fA-F]{64}", baseline_hash.strip()):
+        return _blocked(
+            "'baseline_evidence_sha256' must be a 64-character hexadecimal sha256 hash",
+            f"{category}: fix 'baseline_evidence_sha256' - record the artifact's sha256 "
+            "(64 hex characters)",
+        )
     return _pass(
-        "Phase 1 head SHA valid, baseline evidence referenced, test set declared untouched"
+        "Phase 1 head SHA valid; baseline artifact hashed; test set untouched (self-reported)"
     )
 
 
@@ -590,9 +675,14 @@ def _check_model_checkpoint(fields: dict[str, Any], _evidence: dict[str, Any]) -
             "'checksum_recorded' is true but 'checksum_sha256' is absent",
             f"{category}: record the checksum hash string itself",
         )
+    if not re.fullmatch(r"[0-9a-fA-F]{64}", checksum.strip()):
+        return _blocked(
+            "'checksum_sha256' must be a 64-character hexadecimal hash",
+            f"{category}: record the checkpoint artifact's actual sha256 (64 hex characters)",
+        )
     checkpoint_id = _clip(fields["checkpoint_id"])
     return _pass(
-        f"safetensors checkpoint '{checkpoint_id}' pinned to a revision with a recorded checksum"
+        f"checkpoint (self-reported; hub not verified): '{checkpoint_id}' pinned, checksum recorded"
     )
 
 
@@ -697,7 +787,17 @@ def _check_artifact_privacy_controls(
             "(weight-commit risk R-08)",
             f"{category}: add the missing ignore patterns before the first checkpoint download",
         )
-    return _pass("gitignore covers *.bin and *.pt and a reports PII policy is stated")
+    if fields["verified_against_repository"] is False:
+        return _unknown(
+            "declared patterns are not verified against the repository "
+            "('verified_against_repository' is false)",
+            f"{category}: verify the declared patterns against the repository "
+            "('git check-ignore ...') and set the flag true",
+        )
+    return _pass(
+        "gitignore covers *.bin/*.pt; PII policy stated; patterns verified against "
+        "the repository (self-reported)"
+    )
 
 
 @check("owner_approval")
@@ -867,74 +967,86 @@ def _fail_closed(reason: str, *, as_json: bool) -> int:
 
 
 def build_template() -> dict[str, Any]:
-    """A filled, schema-valid evidence file that doubles as a PASS example."""
+    """An honest, INCOMPLETE onboarding template for the owner.
+
+    This is a schema example, NOT an evidence package and NOT a passing
+    example: every field that would claim a completed real-world action
+    (a signed agreement, an executed audit, an owner approval, a pinned
+    revision) is a ``TODO:`` placeholder or an explicit not-done flag, so
+    feeding this template back through ``--input`` yields UNKNOWN/BLOCKED
+    verdicts and a nonzero exit code. Passing synthetic fixtures exist only
+    inside the test suite, clearly marked as fabricated.
+    """
     return {
         "schema_version": 1,
         "dataset_provenance": {
-            "source_url": "https://github.com/kietnv/VietnameseDatasets (UIT-VSFC, "
-            "author delivery after signing the corpus user agreement)",
-            "license_statement": "UIT-VSFC corpus user agreement signed; "
-            "non-commercial research use permitted by the authors",
+            "source_url": "TODO: record the dataset's official source URL",
+            "license_statement": "TODO: quote the concrete license or agreement terms "
+            "from the authoritative source (do not declare a status)",
             "access_condition_class": "author_agreement_signed",
-            "agreement_reference": "signed agreement stored locally; request email "
-            "sent 2026-11-01 to kietnv@uit.edu.vn",
+            "agreement_reference": "TODO: only after signing - record the agreement file "
+            "or the agreement email date; leave as TODO until it actually happens",
         },
         "label_mapping_verification": {
             "method": "blind_audit",
-            "audit_sample_size": 135,
-            "agreement_rate": 0.92,
+            "audit_sample_size": 0,
+            "agreement_rate": 0.0,
             "resulting_mapping": ["negative", "neutral", "positive"],
         },
         "split_definition": {
-            "train_source": "data/raw/uit_vsfc/train (author-delivered archive, "
-            "line-paired sentences.txt/sentiments.txt)",
-            "validation_source": "data/raw/uit_vsfc/validation (same delivery)",
-            "test_source": "data/raw/uit_vsfc/test (same delivery)",
-            "train_size": 11426,
-            "validation_size": 1583,
-            "test_size": 3166,
+            "train_source": "TODO: describe the train split source",
+            "validation_source": "TODO: describe the validation split source",
+            "test_source": "TODO: describe the test split source",
+            "train_size": 0,
+            "validation_size": 0,
+            "test_size": 0,
             "fingerprint_algorithm": "sha256",
         },
         "leakage_preflight": {
             "exact_match_planned": True,
-            "near_duplicate_method": "tfidf_cosine",
+            "exact_match_executed": False,
+            "exact_match_report_reference": "",
+            "near_duplicate_method": "TODO: choose and record the near-duplicate method",
             "near_duplicate_threshold": 0.9,
+            "near_duplicate_executed": False,
+            "near_duplicate_report_reference": "",
+            "unresolved_conflicts": 0,
         },
         "phase1_integrity": {
-            "phase1_head_sha": "95f7687735c785367fa0a6f9b1efbf0e284aac7f",
-            "baseline_evidence_reference": "reports/metrics/phase1_baseline.json "
-            "(sha256 recorded in the artifact index)",
+            "phase1_head_sha": "TODO: record the exact 40-hex Phase 1 head commit SHA",
+            "baseline_evidence_reference": "TODO: reference the produced baseline metrics "
+            "artifact (only meaningful after a real run)",
+            "baseline_evidence_sha256": "",
             "test_set_untouched": True,
         },
         "model_checkpoint": {
-            "checkpoint_id": "vinai/phobert-base",
-            "revision_sha": "9a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b",
-            "license_name": "MIT",
+            "checkpoint_id": "TODO: record the checkpoint id you will actually use",
+            "revision_sha": "TODO: pin the exact 40-hex revision SHA from the hub",
+            "license_name": "TODO: quote the license from the model card",
             "weights_format": "safetensors",
-            "checksum_recorded": True,
-            "checksum_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+            "checksum_recorded": False,
+            "checksum_sha256": "",
         },
         "tokenization_contract": {
-            "segmenter_name": "py_vncorenlp",
-            "segmenter_version": "0.1.0",
-            "determinism_evidence_reference": "logs/tokenization/determinism_report.md "
-            "(double-segmentation fingerprints equal)",
+            "segmenter_name": "TODO: record the segmenter (e.g. underthesea) and version",
+            "segmenter_version": "TODO: record the pinned segmenter version",
+            "determinism_evidence_reference": "TODO: reference the segmentation determinism "
+            "check (only meaningful once it has been run)",
             "max_length": 256,
             "truncation_side": "right",
         },
         "dependency_plan": {
             "pinned_versions": {
-                "torch": "2.5.1+cu121",
-                "transformers": "4.46.2",
-                "segmenter": "0.1.0",
+                "torch": "TODO",
+                "transformers": "TODO",
+                "segmenter": "TODO",
             },
-            "lockfile_reference": "requirements-phase2.txt (sha256 recorded in the Phase 2 branch)",
+            "lockfile_reference": "TODO: reference the lockfile once created",
         },
         "compute_feasibility": {
             "device": "cuda",
-            "vram_gb": 6,
-            "oom_recovery_plan": "pre-declared ladder: halve micro-batch and double "
-            "accumulation (8x4 -> 4x8 -> 2x16 -> 1x32)",
+            "vram_gb": 0,
+            "oom_recovery_plan": "TODO: record the pre-declared OOM recovery ladder",
         },
         "artifact_privacy_controls": {
             "gitignore_patterns": [
@@ -946,14 +1058,14 @@ def build_template() -> dict[str, Any]:
                 "logs/",
                 ".env",
             ],
-            "reports_pii_policy": "no raw student text in committed reports; "
-            "aggregates and line indices only",
+            "reports_pii_policy": "TODO: state the PII policy for committed reports "
+            "(aggregates and line indices only; no raw feedback text)",
+            "verified_against_repository": False,
         },
         "owner_approval": {
-            "approver": "VFI project owner",
-            "approval_date": "2026-11-01",
-            "scope_statement": "approved for the M1 pilot as scoped in "
-            "docs/phase2/pilot-experiment-plan.md",
+            "approver": "TODO: the owner fills this in personally at approval time",
+            "approval_date": "TODO: ISO-8601 date of the real approval",
+            "scope_statement": "TODO: state the approved scope (e.g. the M1 pilot)",
         },
     }
 
@@ -977,7 +1089,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--schema",
         action="store_true",
-        help="print the filled template evidence file (valid JSON) and exit",
+        help=(
+            "print an INCOMPLETE onboarding template (valid JSON) and exit: TODO "
+            "placeholders yield UNKNOWN/BLOCKED verdicts - it is an example of the "
+            "schema, NOT an example of passing evidence"
+        ),
     )
     parser.add_argument(
         "--json",
