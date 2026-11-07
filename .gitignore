@@ -30,11 +30,23 @@ data/*.zip
 !data/README.md
 
 # --- Model artifacts / experiment outputs (root-anchored) ---
+# Lesson learned: these patterns MUST stay root-anchored - an unanchored
+# `models/` once shadowed the src/vfi/models/ package from git AND ruff.
 /models/
 /reports/artifacts/
 *.joblib
 *.pkl
 *.safetensors
+
+# --- Model weights / checkpoints (torch-era formats, risk R-08) ---
+*.bin
+*.pt
+*.ckpt
+*.onnx
+*.h5
+
+# --- Independent dataset stores (custom dataset builder output) ---
+data/datasets/
 
 # --- OS / editor noise ---
 .DS_Store
