@@ -21,7 +21,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
-    "ruff>=0.4",
+    # Pinned for deterministic lint between local runs and CI.
+    "ruff==0.17.4",
 ]
 
 [project.scripts]

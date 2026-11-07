@@ -9,12 +9,13 @@ the validation split; the test split is evaluated separately (see
 from __future__ import annotations
 
 import json
+import sys
 import time
 import warnings
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -57,7 +58,7 @@ class MajorityBaseline:
     def __init__(self) -> None:
         self.majority_label: str | None = None
 
-    def fit(self, records: Sequence[Record]) -> "MajorityBaseline":
+    def fit(self, records: Sequence[Record]) -> MajorityBaseline:
         counts: Counter[str] = Counter(record.label for record in records)
         if not counts:
             raise ValueError("Cannot fit MajorityBaseline on an empty record list")
@@ -169,7 +170,9 @@ def save_model(
     :func:`load_model` checks before deserializing.
     """
     if model_id not in MODEL_IDS.values():
-        raise ValueError(f"Unknown model_id {model_id!r}; expected one of {sorted(MODEL_IDS.values())}")
+        raise ValueError(
+            f"Unknown model_id {model_id!r}; expected one of {sorted(MODEL_IDS.values())}"
+        )
     out_dir = Path(model_dir) / model_id
     out_dir.mkdir(parents=True, exist_ok=True)
     joblib.dump(model, out_dir / "model.joblib")
@@ -194,7 +197,9 @@ def load_model(model_dir: str | Path, model_id: str) -> tuple[Any, dict[str, Any
             metadata sidecar is missing.
     """
     if model_id not in MODEL_IDS.values():
-        raise FileNotFoundError(f"Unknown model_id {model_id!r}; expected one of {sorted(MODEL_IDS.values())}")
+        raise FileNotFoundError(
+            f"Unknown model_id {model_id!r}; expected one of {sorted(MODEL_IDS.values())}"
+        )
     artifact_dir = Path(model_dir) / model_id
     meta_path = artifact_dir / "meta.json"
     model_path = artifact_dir / "model.joblib"
@@ -225,12 +230,12 @@ def build_training_metadata(
 ) -> dict[str, Any]:
     """Assemble provenance metadata recorded next to every trained model."""
     metadata: dict[str, Any] = {
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "config": config_to_dict_safe(app_config),
         "config_hash": config_hash(app_config),
         "dataset_fingerprints": dataset_fingerprints,
         "sklearn_version": sklearn.__version__,
-        "python_version": f"{__import__('sys').version_info.major}.{__import__('sys').version_info.minor}",
+        "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
         "seed": app_config.data.seed,
     }
     if extra:
