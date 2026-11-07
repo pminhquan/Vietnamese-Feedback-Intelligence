@@ -594,3 +594,75 @@ changes.
 
 Close behind: R-09 (test-set tuning without a ledger), R-10 (dependency drift), R-13 (CI
 blindness to training code).
+
+---
+
+## Hardening pass 2026-11-07 (Red Team Agent E — adversarial review; evidence-only updates)
+
+An adversarial pass attacked the readiness package itself: the hardware probe (working-tree
+version), the 17 dossier documents, and the planned Phase 2 workflow. No risk was re-scored
+except where noted; history above is unchanged.
+
+**R-05 (PII in reports) — evidence strengthened, likelihood unchanged (Medium).** [VERIFIED
+FACT] The end-to-end flow was confirmed at commit `95f7687`: `find_leakage`
+(`src/vfi/data/validation.py:43-61`) returns a mapping **keyed by the normalized student
+text**, which `cmd_prepare_data` embeds verbatim into `reports/artifacts/data_report.json`
+(`cli.py:83-91`, written `:99`, printed `:101`). The only commit protection is the
+`reports/artifacts/` ignore rule; `config.py:141` (`reports_dir` override) can relocate the
+report to any unignored path, after which raw feedback would be committable. New direction
+added to mitigation 1: treat any non-default `reports_dir` as untrusted for Phase 2 reporting.
+
+**R-08 (accidental weight commits) — evidence strengthened, likelihood unchanged (Medium).**
+[VERIFIED FACT, `git check-ignore` in the readiness clone 2026-11-07] `models/torch_model.bin`,
+`models/weights.pt`, `models/check.ckpt`, `models/model.safetensors`, `models/model.onnx` are
+all ignored via the unanchored `models/` rule (`.gitignore:33`); `pytorch_model.bin` at the
+root, `checkpoints/epoch3.pt`, `artifacts/phobert/adapter_model.bin`, and `export/model.onnx`
+are NOT ignored — the gap is exactly the extensions outside `models/`, as claimed. Note: the
+clone's `.gitignore:33` is the unanchored `models/` variant, which is more protective than
+Phase 1's root-anchored `/models/` (`95f7687:.gitignore:33`); the extension additions remain
+required before the first HF download.
+
+**R-13 (Phase 2 code invisible to CI) — evidence strengthened, likelihood unchanged (High).**
+[VERIFIED FACT, `gh` API 2026-11-07] PR #2 (`research/phase2-readiness`, head
+`fd91f4701d86380b99a4555a8ca26ef5aadea522`) has **zero status checks**: the branch carries no
+CI workflow and `gh run list` shows no runs for it. CI exists only on `pull_request`/`push`
+to `main` (`ci.yml:9-32`). PR #1: OPEN, Draft, MERGEABLE, CI green (run 42324940437, success
+2026-11-07T01:36:08Z, after a superseded failed run 42324583725).
+
+**R-11 (misleading accuracy claims) — audit result: no violation found in the dossier.**
+[VERIFIED FACT] No document claims real accuracy, completed training, or CI success on PR #2.
+The only CI claim found — `00-executive-decision.md:11` and `phase1-dependencies.md:6`
+("PR #1 … CI green") — is accurate per the `gh` evidence above (Draft/Open, MERGEABLE,
+latest run success). Runtime figures in `compute-feasibility.md` carry `[ESTIMATE]` labels
+(section 3 preface labels the whole section; only line 119 restates an estimate as fact and
+could take an inline label).
+
+**New tool-level finding: hardware probe repository-refusal bypass (feeds R-05/R-08; probe
+fix belongs to the readiness package, not Phase 1).** [MEASURED, end-to-end reproduction
+2026-11-07, Windows 11 / Python 3.12.10] Crafted `--output` paths defeat the
+repository-internal refusal (`_repo_internal_refusal`, `hardware_probe.py:428`): the
+`\\?\`-prefixed and `\?\`-rooted forms resolve to drive-relative strings
+(`Path.resolve()` quirk), and a trailing-space component resolves to a `\\?\`-prefixed string;
+in all three cases the parents comparison against the plain repo root misses, the probe exits
+0, and the detailed (username/hostname-bearing) file is written INSIDE the repository tree —
+observed at `<repo>\project-personal\VFI-Phase2-Research\redteam_leak_a.json` and in the real
+`docs/` directory. Files landed there are committable (no ignore rule covers them). A UNC
+spelling (`\\localhost\D$\...`) also bypasses the refusal but writes outside the repo (new
+`D:\localhost\...` tree). Reproduced guard-side, lower severity: environment spoofing
+(`LOGNAME`/`USER`/`LNAME`/`USERNAME`, `USERPROFILE`) blinds the sanitization guard to the real
+username on the `--output` stderr echo (`getpass.getuser()` env preference +
+`Path.home()`→`USERPROFILE`); `COMPUTERNAME` spoofing does NOT affect `platform.node()`
+(hostname guard holds); argparse `unrecognized arguments` echoes argv verbatim, unredacted,
+before any guard. Verified COVERED (no bypass found): case variants, forward slashes, `.`/`..`
+traversal, trailing dot/space on the file name, 8.3 short names on this volume (no short name
+allocated for the repo directory), symlink-into-repo, and stdout/stderr on all normal code
+paths (byte-level audit with `-I` from 4 working directories × 6 flag combinations: zero
+personal values emitted). Values not matching username/hostname/home reach the summary
+unredacted (e.g. another account's path inside a failing tool's stderr) — a documented limit
+(`hardware-probe-guide.md:66-73`), not a new hole. Fix direction for the probe: strip
+`\\?\`/`\\?\UNC\` prefixes and expand drive-relative forms before comparison (or re-resolve
+with `strict=True` after the parent exists and re-check at write time), and route the argparse
+echo through the same redaction contract. Reproductions are pinned by strict-xfail tests in
+`tests/phase2_readiness/test_red_team.py`; `pytest tests/phase2_readiness -q` passes
+(33 passed, 5 xfailed), ruff clean. Doc fixes required in `hardware-probe-guide.md` (lines 59,
+63, 64, 104) are queued for the QA agent.
