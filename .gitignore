@@ -29,9 +29,9 @@ data/*.parquet
 data/*.zip
 !data/README.md
 
-# --- Model artifacts / experiment outputs ---
-models/
-reports/artifacts/
+# --- Model artifacts / experiment outputs (root-anchored) ---
+/models/
+/reports/artifacts/
 *.joblib
 *.pkl
 *.safetensors
