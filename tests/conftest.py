@@ -75,7 +75,16 @@ def write_test_config(
     ``min_df`` is lowered to 1 because synthetic corpora are tiny.
     """
     config = {
-        "data": {"raw_dir": str(raw_dir), "use_official_splits": True, "seed": seed},
+        "data": {
+            "raw_dir": str(raw_dir),
+            "use_official_splits": True,
+            "seed": seed,
+            # Test fixtures define their OWN label space, so the raw-label
+            # gate is satisfied by an explicit, honestly-labeled declaration.
+            "label_mapping_source": "synthetic_fixture",
+            "label_mapping": "0:positive,1:negative,2:neutral",
+            "label_mapping_evidence": "synthetic test fixture (labels defined by the test)",
+        },
         "models": {
             "tfidf_logreg": {
                 "analyzer": "word",

@@ -8,6 +8,7 @@ the validation split; the test split is evaluated separately (see
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 import time
@@ -57,6 +58,10 @@ class MajorityBaseline:
 
     def __init__(self) -> None:
         self.majority_label: str | None = None
+        # sklearn-style fitted-class contract: the constant predictor's
+        # probability space is always the full canonical space (unseen
+        # classes get 0.0), so len(classes_) == len(predict_proba row).
+        self.classes_: list[str] = list(CANONICAL_LABELS)
 
     def fit(self, records: Sequence[Record]) -> MajorityBaseline:
         counts: Counter[str] = Counter(record.label for record in records)
@@ -166,8 +171,12 @@ def save_model(
     """Persist a fitted model plus a metadata sidecar under ``model_dir``.
 
     The sidecar (``meta.json``) carries the trusted-artifact provenance
-    (versions, config hash, dataset fingerprints, timestamps) that
-    :func:`load_model` checks before deserializing.
+    (versions, config hash, dataset fingerprints, timestamps) plus the
+    artifact's sha256 and size, which :func:`load_model` verifies before
+    deserializing. TRUST BOUNDARY: the sidecar hash detects corruption and
+    accidental modification only — an attacker who can replace the artifact
+    can also rewrite the sidecar, and joblib deserialization executes pickle
+    semantics, so NEVER load joblib files from untrusted sources.
     """
     if model_id not in MODEL_IDS.values():
         raise ValueError(
@@ -175,12 +184,24 @@ def save_model(
         )
     out_dir = Path(model_dir) / model_id
     out_dir.mkdir(parents=True, exist_ok=True)
-    joblib.dump(model, out_dir / "model.joblib")
+    model_path = out_dir / "model.joblib"
+    joblib.dump(model, model_path)
+    metadata = dict(metadata)
+    metadata["artifact_sha256"] = _sha256_file(model_path)
+    metadata["artifact_size_bytes"] = model_path.stat().st_size
     (out_dir / "meta.json").write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True),
         encoding="utf-8",
     )
     return out_dir
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def load_model(model_dir: str | Path, model_id: str) -> tuple[Any, dict[str, Any]]:
@@ -189,12 +210,15 @@ def load_model(model_dir: str | Path, model_id: str) -> tuple[Any, dict[str, Any
     Trusted-artifact policy: only load artifacts produced by this project's
     ``vfi train`` command from the local ``models/`` directory, and only
     after the metadata sidecar passes these checks — known model_id, present
-    config hash, and a matching scikit-learn major version (mismatch warns;
-    a different major version can change predictions, so retrain instead).
+    config hash, a matching scikit-learn version (mismatch warns; a different
+    version can change predictions, so retrain instead), and an artifact
+    sha256/size that match the file on disk (mismatch refuses: the artifact
+    is corrupted or was modified after training). This detects corruption,
+    NOT tampering — see the trust boundary in :func:`save_model`.
 
     Raises:
         FileNotFoundError: with a clear message when the artifact or its
-            metadata sidecar is missing.
+            metadata sidecar is missing or fails integrity checks.
     """
     if model_id not in MODEL_IDS.values():
         raise FileNotFoundError(
@@ -211,6 +235,23 @@ def load_model(model_dir: str | Path, model_id: str) -> tuple[Any, dict[str, Any
     metadata = json.loads(meta_path.read_text(encoding="utf-8"))
     if "config_hash" not in metadata:
         raise FileNotFoundError(f"Artifact metadata for {model_id!r} is missing 'config_hash'")
+    if "artifact_sha256" not in metadata:
+        raise FileNotFoundError(
+            f"Artifact metadata for {model_id!r} is missing 'artifact_sha256'; retrain "
+            "(artifacts saved before integrity tracking are not loadable)"
+        )
+    actual_sha256 = _sha256_file(model_path)
+    if actual_sha256 != metadata["artifact_sha256"]:
+        raise FileNotFoundError(
+            f"Artifact {model_id!r} failed its integrity check (sha256 mismatch): the "
+            "model file was corrupted or modified after training. Do not load it; "
+            "retrain instead."
+        )
+    expected_size = metadata.get("artifact_size_bytes")
+    if expected_size is not None and model_path.stat().st_size != expected_size:
+        raise FileNotFoundError(
+            f"Artifact {model_id!r} failed its integrity check (size mismatch); retrain."
+        )
     if metadata.get("sklearn_version") != sklearn.__version__:
         warnings.warn(
             f"Artifact {model_id!r} was trained with scikit-learn "

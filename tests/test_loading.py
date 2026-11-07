@@ -9,7 +9,13 @@ from tests.conftest import make_records, write_vsfc_files
 
 from vfi.data.loading import (
     CANONICAL_LABELS,
+    DEFAULT_RAW_LABEL_MAPPING,
+    LABEL_SOURCE_OWNER_CONFIRMED,
+    LABEL_SOURCE_SEACROWD_UNVERIFIED,
+    LABEL_SOURCE_SYNTHETIC,
+    RAW_SENTIMENT_TO_LABEL,
     DataLoadingError,
+    RawLabelMapping,
     load_dataset,
     load_split,
     normalize_text,
@@ -107,3 +113,85 @@ class TestLoadDataset:
         assert len(data["train"]) == 6
         assert len(data["validation"]) == 3
         assert len(data["test"]) == 3
+
+
+class TestRawLabelMapping:
+    def test_valid_mapping_stores_provenance(self) -> None:
+        mapping = RawLabelMapping(
+            {0: "negative", 1: "neutral", 2: "positive"},
+            LABEL_SOURCE_OWNER_CONFIRMED,
+            "authors confirmed 0=negative on 2026-11-07",
+        )
+        assert mapping.source == LABEL_SOURCE_OWNER_CONFIRMED
+        assert mapping.evidence.startswith("authors confirmed")
+
+    def test_wrong_key_set_raises(self) -> None:
+        with pytest.raises(ValueError, match="exactly the raw integers"):
+            RawLabelMapping({0: "positive"}, LABEL_SOURCE_SYNTHETIC, "evidence")
+
+    def test_non_permutation_values_raise(self) -> None:
+        with pytest.raises(ValueError, match="permutation"):
+            RawLabelMapping(
+                {0: "negative", 1: "negative", 2: "positive"},
+                LABEL_SOURCE_SYNTHETIC,
+                "evidence",
+            )
+
+    def test_input_dict_is_copied(self) -> None:
+        raw = {0: "positive", 1: "negative", 2: "neutral"}
+        mapping = RawLabelMapping(raw, LABEL_SOURCE_SYNTHETIC, "evidence")
+        raw[0] = "negative"
+        assert mapping.raw_to_canonical[0] == "positive"
+
+    def test_default_mapping_is_unverified_seacrowd_reading(self) -> None:
+        assert DEFAULT_RAW_LABEL_MAPPING.source == LABEL_SOURCE_SEACROWD_UNVERIFIED
+        assert DEFAULT_RAW_LABEL_MAPPING.evidence  # provenance must be stated
+        assert set(DEFAULT_RAW_LABEL_MAPPING.raw_to_canonical.values()) == set(CANONICAL_LABELS)
+
+    def test_legacy_constant_derived_from_default_mapping(self) -> None:
+        assert RAW_SENTIMENT_TO_LABEL == DEFAULT_RAW_LABEL_MAPPING.raw_to_canonical
+        assert RAW_SENTIMENT_TO_LABEL == {0: "positive", 1: "negative", 2: "neutral"}
+
+
+class TestExplicitLabelMappingLoading:
+    OWNER_MAPPING = RawLabelMapping(
+        {0: "negative", 1: "neutral", 2: "positive"},
+        LABEL_SOURCE_OWNER_CONFIRMED,
+        "test-only owner confirmation",
+    )
+
+    def test_load_split_uses_explicit_mapping(self, tmp_path: Path) -> None:
+        split_dir = tmp_path / "train"
+        split_dir.mkdir()
+        (split_dir / "sentences.txt").write_text("a\nb\nc\n", encoding="utf-8")
+        (split_dir / "sentiments.txt").write_text("0\n1\n2\n", encoding="utf-8")
+        records = load_split(tmp_path, "train", label_mapping=self.OWNER_MAPPING)
+        assert [record.label for record in records] == ["negative", "neutral", "positive"]
+
+    def test_explicit_mapping_differs_from_default(self, tmp_path: Path) -> None:
+        split_dir = tmp_path / "train"
+        split_dir.mkdir()
+        (split_dir / "sentences.txt").write_text("a\n", encoding="utf-8")
+        (split_dir / "sentiments.txt").write_text("0\n", encoding="utf-8")
+        explicit = load_split(tmp_path, "train", label_mapping=self.OWNER_MAPPING)[0]
+        default = load_split(tmp_path, "train")[0]
+        assert explicit.label == "negative"
+        assert default.label == "positive"
+
+    def test_load_dataset_passes_mapping_to_every_split(self, tmp_path: Path) -> None:
+        write_vsfc_files(
+            tmp_path,
+            {
+                "train": make_records(1, split="train"),
+                "validation": make_records(1, split="validation"),
+            },
+        )
+        data = load_dataset(
+            tmp_path, splits=("train", "validation"), label_mapping=self.OWNER_MAPPING
+        )
+        raw_to_canonical = self.OWNER_MAPPING.raw_to_canonical
+        for records in data.values():
+            assert all(record.label in set(CANONICAL_LABELS) for record in records)
+            assert {record.label for record in records} == {
+                raw_to_canonical[raw] for raw in {0, 1, 2}
+            }

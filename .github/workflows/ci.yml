@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+# Minimal permissions: CI only reads the repository.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -30,3 +34,6 @@ jobs:
 
       - name: Tests
         run: python -m pytest tests -q
+
+      - name: Structural checks (artifact/dataset commit guard)
+        run: python scripts/verify.py --structure-only

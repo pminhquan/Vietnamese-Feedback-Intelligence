@@ -22,14 +22,26 @@ Deep-learning models (PhoBERT), API serving, and dashboards are explicitly
 
 ## Dataset status (important)
 
-The candidate dataset UIT-VSFC cannot be redistributed without permission:
-its license is unverified (`license: unknown` on the HF mirror) and the
-author's official channel requires signing a corpus user agreement. Full
-findings and the unblocking procedure: [`docs/dataset-uit-vsfc.md`](docs/dataset-uit-vsfc.md).
+**The project is dataset-independent** (owner decision: no author email, no
+corpus agreement for UIT-VSFC). Datasets are selected through
+`data.dataset_adapter` — the historical UIT-VSFC layout, five-level CSV
+exports (documented `1,2→neg / 3→neu / 4,5→pos` mapping), NEU-ESC-style
+4-class CSV (Toxic stays a DISTINCT class; exclusion/relabeling requires an
+explicit written justification), or the **independent custom dataset** built
+with `vfi dataset init/add-synthetic/annotate/report` (human-annotation
+honesty invariants: synthetic labels can never be approved without personal
+human review). Verified landscape and recommendation:
+[`docs/dataset-strategy.md`](docs/dataset-strategy.md).
+
+The UIT-VSFC raw-label encoding remains UNRESOLVED (two public mirrors
+disagree); training through the `uit_vsfc` adapter is therefore refused
+until an explicit, evidenced label mapping is configured. Its license still
+forbids casual download — see [`docs/dataset-uit-vsfc.md`](docs/dataset-uit-vsfc.md).
 
 **Consequently, no model metrics are reported in this repository yet.** The
 entire pipeline is implemented and tested on deterministic synthetic
-fixtures; real experiments run locally once the owner obtains access.
+fixtures; real experiments run locally once a legitimately licensed dataset
+is in place.
 
 ## Setup (Windows PowerShell)
 

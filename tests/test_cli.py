@@ -44,9 +44,19 @@ class TestPrepareData:
         assert exit_code == 0
         report_path = project["reports"] / "data_report.json"
         report = json.loads(report_path.read_text(encoding="utf-8"))
-        assert report["train"]["n_records"] == 12
-        assert report["leakage"]["cross_split_duplicate_texts"] == []
-        assert "fingerprint" in report["train"]
+        # The report is keyed by split under "splits" and is privacy-safe.
+        assert report["splits"]["train"]["n_records"] == 12
+        assert report["splits"]["train"]["class_distribution"] == {
+            "negative": 4,
+            "neutral": 4,
+            "positive": 4,
+        }
+        assert "fingerprint" in report["splits"]["train"]
+        # No raw feedback text anywhere in the report (privacy regression).
+        from tests.conftest import make_records
+
+        for record in make_records(2, split="train"):
+            assert record.text not in report_path.read_text(encoding="utf-8")
 
     def test_missing_data_fails_cleanly(self, project: dict[str, Path]) -> None:
         project["raw"].rename(project["tmp"] / "moved_away")
@@ -69,7 +79,10 @@ class TestTrainEvaluate:
         training_report = json.loads(
             (project["reports"] / "training_report.json").read_text(encoding="utf-8")
         )
-        assert training_report["split_sizes"]["test_untouched"] == 6
+        # Test records are never loaded by the training command.
+        assert training_report["test_not_loaded_by_training"] is True
+        assert training_report["split_sizes_used"] == {"train": 12, "validation": 6}
+        assert training_report["benchmark_clean"] is True
         assert len(training_report["validation_report"]["search_trials"]) == 4
 
     def test_evaluate_on_test_split(
@@ -145,6 +158,51 @@ class TestPredict:
 
     def test_predict_empty_text_usage_error(self) -> None:
         assert main(["predict", "--text", "   "]) == 2
+
+    def test_predict_binary_model_aligns_probabilities_to_fitted_classes(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Regression: a partial-class model must not crash or mislabel probabilities."""
+        from tests.conftest import write_test_config, write_vsfc_files
+
+        from vfi.cli import main as cli_main
+        from vfi.data.loading import Record
+
+        raw, models = tmp_path / "raw", tmp_path / "models"
+        neg = [Record(f"khong tot lam {i}", "negative", "train") for i in range(6)]
+        pos = [Record(f"rat tot va hay {i}", "positive", "train") for i in range(6)]
+        negv = [Record(f"khong tot lam val {i}", "negative", "validation") for i in range(3)]
+        posv = [Record(f"rat tot val {i}", "positive", "validation") for i in range(3)]
+        write_vsfc_files(
+            raw,
+            {
+                "train": neg + pos,
+                "validation": negv + posv,
+                "test": [Record("t1", "negative", "test"), Record("t2", "positive", "test")],
+            },
+        )
+        config = tmp_path / "config.yaml"
+        write_test_config(config, raw, models, tmp_path / "reports")
+        assert cli_main(["train", "--config", str(config)]) == 0
+        capsys.readouterr()
+        assert (
+            cli_main(
+                [
+                    "predict",
+                    "--text",
+                    "rat tot va hay",
+                    "--model-dir",
+                    str(models),
+                ]
+            )
+            == 0
+        )
+        result = json.loads(capsys.readouterr().out)
+        # Columns follow the FITTED classes (2 classes, canonical order here),
+        # not an assumed 3-wide layout.
+        assert sorted(result["probabilities"]) == ["negative", "positive"]
+        assert sum(result["probabilities"].values()) == pytest.approx(1.0)
+        assert result["classes_missing_from_training"] == ["neutral"]
 
     def test_predict_missing_model_runtime_error(self, tmp_path: Path) -> None:
         empty_dir = tmp_path / "no_models"
