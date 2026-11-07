@@ -1,0 +1,43 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- Environment / secrets ---
+.env
+.env.*
+*.key
+
+# --- Local datasets: NEVER commit raw or processed data ---
+data/raw/
+data/processed/
+data/external/
+data/*.csv
+data/*.tsv
+data/*.jsonl
+data/*.parquet
+data/*.zip
+!data/README.md
+
+# --- Model artifacts / experiment outputs ---
+models/
+reports/artifacts/
+*.joblib
+*.pkl
+*.safetensors
+
+# --- OS / editor noise ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
