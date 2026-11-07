@@ -146,6 +146,51 @@ class TestPredict:
     def test_predict_empty_text_usage_error(self) -> None:
         assert main(["predict", "--text", "   "]) == 2
 
+    def test_predict_binary_model_aligns_probabilities_to_fitted_classes(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Regression: a partial-class model must not crash or mislabel probabilities."""
+        from tests.conftest import write_test_config, write_vsfc_files
+
+        from vfi.cli import main as cli_main
+        from vfi.data.loading import Record
+
+        raw, models = tmp_path / "raw", tmp_path / "models"
+        neg = [Record(f"khong tot lam {i}", "negative", "train") for i in range(6)]
+        pos = [Record(f"rat tot va hay {i}", "positive", "train") for i in range(6)]
+        negv = [Record(f"khong tot lam val {i}", "negative", "validation") for i in range(3)]
+        posv = [Record(f"rat tot val {i}", "positive", "validation") for i in range(3)]
+        write_vsfc_files(
+            raw,
+            {
+                "train": neg + pos,
+                "validation": negv + posv,
+                "test": [Record("t1", "negative", "test"), Record("t2", "positive", "test")],
+            },
+        )
+        config = tmp_path / "config.yaml"
+        write_test_config(config, raw, models, tmp_path / "reports")
+        assert cli_main(["train", "--config", str(config)]) == 0
+        capsys.readouterr()
+        assert (
+            cli_main(
+                [
+                    "predict",
+                    "--text",
+                    "rat tot va hay",
+                    "--model-dir",
+                    str(models),
+                ]
+            )
+            == 0
+        )
+        result = json.loads(capsys.readouterr().out)
+        # Columns follow the FITTED classes (2 classes, canonical order here),
+        # not an assumed 3-wide layout.
+        assert sorted(result["probabilities"]) == ["negative", "positive"]
+        assert sum(result["probabilities"].values()) == pytest.approx(1.0)
+        assert result["classes_missing_from_training"] == ["neutral"]
+
     def test_predict_missing_model_runtime_error(self, tmp_path: Path) -> None:
         empty_dir = tmp_path / "no_models"
         empty_dir.mkdir()

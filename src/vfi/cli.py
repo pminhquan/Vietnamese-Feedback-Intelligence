@@ -242,12 +242,36 @@ def cmd_predict(args: argparse.Namespace) -> int:
     }
     proba_fn = getattr(model, "predict_proba", None)
     if proba_fn is not None:
+        # Probability columns follow the FITTED class order (the classifier's
+        # classes_), never an assumed canonical order - a model trained on a
+        # subset of classes has fewer columns, and a different training-label
+        # order would silently mislabel probabilities.
+        classifier = getattr(model, "named_steps", {}).get("clf")
+        classes = getattr(classifier, "classes_", None) if classifier is not None else None
+        if classes is None:
+            classes = getattr(model, "classes_", None)
+        if classes is None or len(classes) != len(proba_fn([text])[0]):
+            return _fail(
+                "cannot align probabilities: the model does not expose its fitted "
+                "class order (classes_); retrain with this project's train command",
+                1,
+            )
+        classes = [str(label) for label in classes]
         from vfi.data.loading import CANONICAL_LABELS
 
+        unknown = [label for label in classes if label not in CANONICAL_LABELS]
+        if unknown:
+            return _fail(
+                f"model was fitted with label(s) outside the canonical space: {unknown}",
+                1,
+            )
         row = proba_fn([text])[0]
         result["probabilities"] = {
-            label: float(prob) for label, prob in zip(CANONICAL_LABELS, row, strict=True)
+            label: float(prob) for label, prob in zip(classes, row, strict=True)
         }
+        if len(classes) < len(CANONICAL_LABELS):
+            # Partial-class model: report the gap honestly instead of padding.
+            result["classes_missing_from_training"] = sorted(set(CANONICAL_LABELS) - set(classes))
     _print_json(result)
     return 0
 

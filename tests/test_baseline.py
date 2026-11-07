@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import joblib
 import pytest
 import sklearn
 from sklearn.pipeline import Pipeline
@@ -175,3 +176,38 @@ class TestArtifacts:
         assert loaded["sklearn_version"] == sklearn.__version__
         assert loaded["seed"] == AppConfig().data.seed
         assert loaded["dataset_fingerprints"] == {"train": "f" * 64}
+
+    def test_meta_records_artifact_sha256_and_size(self, tmp_path: Path) -> None:
+        model = MajorityBaseline().fit(make_records(2))
+        out_dir = save_model(tmp_path, MODEL_IDS["majority"], model, {})
+        loaded = json.loads((out_dir / "meta.json").read_text(encoding="utf-8"))
+        model_path = out_dir / "model.joblib"
+        import hashlib
+
+        assert loaded["artifact_sha256"] == hashlib.sha256(model_path.read_bytes()).hexdigest()
+        assert loaded["artifact_size_bytes"] == model_path.stat().st_size > 0
+
+    def test_load_refuses_tampered_artifact(self, tmp_path: Path) -> None:
+        """Integrity check catches a modified model file (corruption, not auth)."""
+        model = MajorityBaseline().fit(make_records(2))
+        out_dir = save_model(tmp_path, MODEL_IDS["majority"], model, {"config_hash": "tamper-test"})
+        model_path = out_dir / "model.joblib"
+        model_path.write_bytes(model_path.read_bytes() + b"tampered")
+        with pytest.raises(FileNotFoundError, match="integrity check"):
+            load_model(tmp_path, MODEL_IDS["majority"])
+
+    def test_load_refuses_metadata_without_artifact_sha256(self, tmp_path: Path) -> None:
+        """Artifacts saved before integrity tracking are not loadable."""
+        model = MajorityBaseline().fit(make_records(2))
+        out_dir = tmp_path / MODEL_IDS["majority"]
+        out_dir.mkdir(parents=True)
+        joblib.dump(model, out_dir / "model.joblib")
+        (out_dir / "meta.json").write_text(json.dumps({"config_hash": "abc123"}), encoding="utf-8")
+        with pytest.raises(FileNotFoundError, match="artifact_sha256"):
+            load_model(tmp_path, MODEL_IDS["majority"])
+
+    def test_majority_exposes_sklearn_style_classes(self) -> None:
+        model = MajorityBaseline().fit(make_records(2))
+        assert model.classes_ == ["negative", "neutral", "positive"]
+        assert len(model.predict_proba(["x"])) == 1
+        assert len(model.predict_proba(["x"])[0]) == len(model.classes_)
