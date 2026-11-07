@@ -88,7 +88,11 @@ summary (file:line | severity | one-line direction):
    `\\?\`/`\\?\UNC\` prefixes, expand drive-relative forms) or re-verify the destination with
    `Path.resolve(strict=True)` after the parent directory exists, and re-run the refusal check
    at write time. Red-team tests live in `tests/phase2_readiness/test_red_team.py` (strict
-   xfail: they pass when the holes are fixed).
+   xfail: they pass when the holes are fixed). RESOLUTION UPDATE 2026-11-07: all five
+   reproduced holes (including the environment-spoofing and argparse-echo findings below)
+   have since been fixed in `hardware_probe.py` with the xfail markers converted to passing
+   regression tests — see `00-executive-decision.md` (hardening pass) and
+   `hardware-probe-guide.md` for the corrected guarantees and limits.
 4. **True CI state, verified via `gh` on 2026-11-07.** [VERIFIED FACT] PR #1
    (`phase1/classical-ml-baselines`): OPEN, Draft, MERGEABLE, CI green (run 42324940437,
    success, 2026-11-07T01:36:08Z; an earlier failed run 42324583725 at 01:32Z was superseded).

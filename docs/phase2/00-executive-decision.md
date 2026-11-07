@@ -213,8 +213,13 @@ An independent hardening round reviewed and extended this package:
   categories (dataset provenance, label verification, splits, leakage
   preflight, Phase 1 integrity, checkpoint/license, tokenization contract,
   dependency plan, compute, artifact/privacy controls, owner approval) and
-  fails closed to BLOCKED; it is an operational checklist — it does not
-  validate legal rights or model quality.
+  fails closed (exit 1 unless every category passes); it is an operational
+  checklist — it does not validate legal rights or model quality.
+  `readiness_gate.py --schema` prints an intentionally INCOMPLETE onboarding
+  template (TODO placeholders and not-done flags; fed back through `--input`
+  it exits 1 with overall "blocked") — a schema example only, never readiness
+  evidence. Owner flow: fill the package with real evidence, run the gate,
+  and treat PASS as a precondition for any training run.
 - **Pilot plan finalized.** `pilot-experiment-plan.md` is the
   implementation-level M1 contract: exactly three models (majority,
   TF-IDF+LogReg, one PhoBERT), no hyperparameter search, seed 42, label
