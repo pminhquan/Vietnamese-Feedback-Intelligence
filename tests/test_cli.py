@@ -45,7 +45,8 @@ class TestPrepareData:
         report_path = project["reports"] / "data_report.json"
         report = json.loads(report_path.read_text(encoding="utf-8"))
         assert report["train"]["n_records"] == 12
-        assert report["leakage"]["cross_split_duplicate_texts"] == []
+        assert report["leakage"]["cross_split_duplicate_texts"] == 0
+        assert "test" not in report["dataset_fingerprints"]
         assert "fingerprint" in report["train"]
 
     def test_missing_data_fails_cleanly(self, project: dict[str, Path]) -> None:
@@ -58,7 +59,7 @@ class TestPrepareData:
 
 
 class TestTrainEvaluate:
-    def test_train_saves_artifacts_and_untouched_test(
+    def test_train_saves_artifacts_and_effective_split_sizes(
         self, project: dict[str, Path], capsys: pytest.CaptureFixture[str]
     ) -> None:
         exit_code = main(["train", "--config", str(project["config"])])
@@ -69,13 +70,14 @@ class TestTrainEvaluate:
         training_report = json.loads(
             (project["reports"] / "training_report.json").read_text(encoding="utf-8")
         )
-        assert training_report["split_sizes"]["test_untouched"] == 6
+        assert training_report["split_sizes"] == {"train": 12, "validation": 6}
         assert len(training_report["validation_report"]["search_trials"]) == 4
 
     def test_evaluate_on_test_split(
         self, project: dict[str, Path], capsys: pytest.CaptureFixture[str]
     ) -> None:
-        main(["train", "--config", str(project["config"])])
+        assert main(["evaluate", "--preflight-only", "--config", str(project["config"])]) == 0
+        assert main(["train", "--config", str(project["config"])]) == 0
         exit_code = main(["evaluate", "--model-id", "majority", "--config", str(project["config"])])
         assert exit_code == 0
         evaluation = json.loads(

@@ -120,7 +120,12 @@ dạng thường gặp:
    trên train — kiểm chứng bằng test `test_vocabulary_learned_from_training_data_only`.
 2. **Sample leakage:** cùng một câu xuất hiện ở hai split (feedback ngắn dễ
    trùng). `find_leakage` trong `src/vfi/data/validation.py` quét trùng
-   chính xác sau chuẩn hóa chung, và `vfi prepare-data` báo cáo số lượng.
+   chính xác sau chuẩn hóa chung. `vfi prepare-data` báo số lượng giữa train
+   và validation. `vfi evaluate --preflight-only` kiểm tra cả test trước khi
+   huấn luyện và chỉ đưa ra số liệu tổng hợp. `vfi train` dừng trước khi fit
+   nếu train và validation trùng câu. Chốt mô hình trên validation rồi mới
+   tính điểm test. Nếu xem điểm test và sửa mô hình nhiều lần dựa trên điểm
+   đó, bạn đang gián tiếp tinh chỉnh trên test.
 
 Hệ quả của leakage: chỉ số đánh giá **lạc quan giả tạo** — mô hình được điểm
 cao vì đã "nhìn thấy đề" — và kết quả không tái lập được ngoài đời.
@@ -136,8 +141,8 @@ cao vì đã "nhìn thấy đề" — và kết quả không tái lập được
 | Pipeline | sklearn Pipeline | PyTorch Dataset/DataLoader/Trainer, early stopping, checkpoint |
 | Rủi ro | underfit/overfit đơn giản | chi phí, seed variance giữa các lần fine-tune, cần nhiều kỷ luật hơn về checkpoint/eval |
 
-Điều **không thay đổi**: chia split, chọn trên validation, chốt rồi mới chạm
-test, macro-F1 làm metric chính, và error analysis. PhoBERT không cứu được
+Điều **không thay đổi**: chia split, chọn trên validation, chốt rồi mới chấm
+điểm test, macro-F1 làm metric chính, và error analysis. PhoBERT không cứu được
 pipeline bẩn.
 
 ---

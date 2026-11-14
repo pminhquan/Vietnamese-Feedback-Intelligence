@@ -8,7 +8,9 @@ the validation split; the test split is evaluated separately (see
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import sys
 import time
 import warnings
@@ -16,6 +18,7 @@ from collections import Counter
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +30,7 @@ from sklearn.pipeline import Pipeline
 
 from vfi.config import AppConfig, TfidfLogRegConfig, config_hash
 from vfi.data.loading import CANONICAL_LABELS, LABEL_TO_ID, Record
+from vfi.data.validation import validate_records
 from vfi.evaluation.metrics import compute_metrics
 
 #: Model identifiers and versions recorded in artifacts and predictions.
@@ -54,6 +58,9 @@ class MajorityBaseline:
     lowest canonical id wins. Probabilities are the degenerate one-hot of the
     majority class (reported honestly as constant, not learned).
     """
+
+    # These columns describe the constant one-hot rule, not fitted class frequencies.
+    classes_ = CANONICAL_LABELS
 
     def __init__(self) -> None:
         self.majority_label: str | None = None
@@ -122,6 +129,12 @@ def run_small_search(
     hyperparameters (ties break to the first candidate in ``SEARCH_SPACE``).
     The validation split is used for selection only and is never refit on.
     """
+    validate_records(train_records)
+    validate_records(validation_records)
+    if {record.label for record in train_records} != set(CANONICAL_LABELS):
+        raise ValueError("Training requires all canonical classes: negative, neutral, positive")
+    if not validation_records:
+        raise ValueError("Validation records must not be empty")
     x_train = [record.text for record in train_records]
     y_train = [record.label for record in train_records]
     x_val = [record.text for record in validation_records]
@@ -165,9 +178,8 @@ def save_model(
 ) -> Path:
     """Persist a fitted model plus a metadata sidecar under ``model_dir``.
 
-    The sidecar (``meta.json``) carries the trusted-artifact provenance
-    (versions, config hash, dataset fingerprints, timestamps) that
-    :func:`load_model` checks before deserializing.
+    The sidecar carries provenance and an accidental-corruption checksum.
+    Neither authenticates an artifact: a malicious author can forge both.
     """
     if model_id not in MODEL_IDS.values():
         raise ValueError(
@@ -176,6 +188,10 @@ def save_model(
     out_dir = Path(model_dir) / model_id
     out_dir.mkdir(parents=True, exist_ok=True)
     joblib.dump(model, out_dir / "model.joblib")
+    metadata = {
+        **metadata,
+        "artifact_sha256": hashlib.sha256((out_dir / "model.joblib").read_bytes()).hexdigest(),
+    }
     (out_dir / "meta.json").write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True),
         encoding="utf-8",
@@ -187,10 +203,10 @@ def load_model(model_dir: str | Path, model_id: str) -> tuple[Any, dict[str, Any
     """Load a model artifact saved by :func:`save_model`.
 
     Trusted-artifact policy: only load artifacts produced by this project's
-    ``vfi train`` command from the local ``models/`` directory, and only
-    after the metadata sidecar passes these checks — known model_id, present
-    config hash, and a matching scikit-learn major version (mismatch warns;
-    a different major version can change predictions, so retrain instead).
+    ``vfi train`` command in a directory under your control. Joblib/pickle
+    loading can execute arbitrary code. Metadata and checksums are forgeable;
+    passing these consistency checks does NOT make an untrusted artifact safe.
+    Version differences warn; retrain before relying on cross-version results.
 
     Raises:
         FileNotFoundError: with a clear message when the artifact or its
@@ -208,9 +224,52 @@ def load_model(model_dir: str | Path, model_id: str) -> tuple[Any, dict[str, Any
             f"No trained artifact for {model_id!r} under {artifact_dir}. "
             "Run 'vfi train' first; only load artifacts produced by this project."
         )
-    metadata = json.loads(meta_path.read_text(encoding="utf-8"))
-    if "config_hash" not in metadata:
+    try:
+        metadata = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (ValueError, OSError) as exc:
+        raise FileNotFoundError(f"Invalid artifact metadata for {model_id!r}") from exc
+    if not isinstance(metadata, dict) or "config_hash" not in metadata:
         raise FileNotFoundError(f"Artifact metadata for {model_id!r} is missing 'config_hash'")
+    config_hash_value = metadata["config_hash"]
+    if not isinstance(config_hash_value, str) or not re.fullmatch(
+        r"[0-9a-f]{16}", config_hash_value
+    ):
+        raise FileNotFoundError("Invalid artifact metadata config_hash")
+    config = metadata.get("config")
+    fingerprints = metadata.get("dataset_fingerprints")
+    if (
+        not isinstance(config, dict)
+        or hashlib.sha256(json.dumps(config, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+        != config_hash_value
+        or not isinstance(fingerprints, dict)
+        or any(
+            split not in ("train", "validation", "test")
+            or not isinstance(value, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", value)
+            for split, value in fingerprints.items()
+        )
+        or metadata.get("model_id") != model_id
+        or any(
+            not isinstance(metadata.get(field), str) or not metadata[field].strip()
+            for field in ("python_version", "sklearn_version")
+        )
+        or type(metadata.get("seed")) is not int
+    ):
+        raise FileNotFoundError("Invalid artifact metadata provenance")
+    try:
+        created_at = datetime.fromisoformat(metadata["created_at"])
+        if created_at.tzinfo is None:
+            raise ValueError("Missing timezone")
+    except (KeyError, TypeError, ValueError) as exc:
+        raise FileNotFoundError("Invalid artifact metadata created_at") from exc
+    artifact_hash = metadata.get("artifact_sha256")
+    if not isinstance(artifact_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", artifact_hash):
+        raise FileNotFoundError(
+            "Missing or invalid artifact checksum; retrain the trusted local model"
+        )
+    model_bytes = model_path.read_bytes()
+    if hashlib.sha256(model_bytes).hexdigest() != artifact_hash:
+        raise FileNotFoundError("Artifact checksum mismatch; retrain the trusted local model")
     if metadata.get("sklearn_version") != sklearn.__version__:
         warnings.warn(
             f"Artifact {model_id!r} was trained with scikit-learn "
@@ -219,7 +278,13 @@ def load_model(model_dir: str | Path, model_id: str) -> tuple[Any, dict[str, Any
             UserWarning,
             stacklevel=2,
         )
-    model = joblib.load(model_path)
+    warnings.warn(
+        "Loading trusted local joblib only: deserialization can execute arbitrary code; "
+        "metadata/checksums do not authenticate artifacts.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+    model = joblib.load(BytesIO(model_bytes))
     return model, metadata
 
 

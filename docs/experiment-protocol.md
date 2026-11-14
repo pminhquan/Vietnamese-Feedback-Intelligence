@@ -6,13 +6,26 @@
    learning the TF-IDF vocabulary.
 2. **Validation** (official dev file): used exclusively for hyperparameter
    selection and error analysis. Never used for fitting.
-3. **Test** (official test file): touched only by `vfi evaluate`, after model
-   selection for the milestone is finalized. Never used for tuning, and never
-   merged with train/validation.
+3. **Test** (official test file): accessed only by `vfi evaluate`. Before
+   training, `--preflight-only` checks integrity without scoring a model or
+   reporting test label distributions. Score test only after finalizing model
+   selection. Keep test out of fitting, tuning, and error-driven iteration.
 
-If the official validation file were unavailable, `vfi train` can carve a
-deterministic stratified validation split from the train file
-(`use_official_splits: false`, seeded). The test file is never generated.
+With `data.use_official_splits: false`, the commands consistently derive a
+stratified validation subset from the raw train split using `validation_size`
+and `seed`. No official validation files are required in this mode. Fingerprints
+and split sizes describe the effective train and validation subsets. The test
+file remains the official test split.
+
+`prepare-data` summarizes the effective train and validation data. `train`
+independently rejects cross-split matches between those subsets before fitting.
+`evaluate --preflight-only` checks all three split pairs. Reports contain counts
+of distinct overlapping texts, counts per pair, and whole-split fingerprints.
+They contain no record text or per-record identifiers. Matches use the shared
+Unicode and whitespace normalization, so case differences and near duplicates
+can escape detection. Cross-split matches fail the check with exit code 1.
+Review those conflicts under the corpus protocol. VFI preserves every record
+and offers no bypass for a failed benchmark preflight.
 
 ## Metrics
 
@@ -49,18 +62,33 @@ model".
 
 ## Reproducibility record (per experiment)
 
-Every trained artifact's `meta.json` and every report JSON records:
+`training_report.json` and model sidecars fingerprint the ordered normalized
+text and label pairs used for fitting and selection. Sidecars also record the
+configuration, seed, Python and scikit-learn versions, training start time, and
+the artifact's SHA-256 checksum. Training reads only the effective train and
+validation files. It can run with test files unavailable.
 
-- dataset source/URL, local fingerprints per split (sha256)
-- random seed, Python version, scikit-learn version
-- full model configuration + short config hash
-- training/evaluation command (below), trial results, timings
+To score a benchmark, `evaluate` requires a passing `evaluation_preflight.json`
+created before fitting. It checks the current configuration and split fingerprints
+against the receipt and the model's training provenance. A change to the test
+snapshot, fit/selection data, or configuration blocks scoring. Rechecking an
+unchanged snapshot preserves the original receipt time. For a changed snapshot,
+run preflight and train again, and report the change as a separate benchmark.
+Evaluation JSON identifies the exact test fingerprint and the training and
+artifact provenance. Keep the preflight report alongside the run's artifacts.
+
+Load only locally trained artifacts from directories you control. Deserializing
+Joblib can execute arbitrary code. A sidecar and checksum can detect malformed
+metadata or accidental changes. Anyone who supplies a model file can also forge
+its sidecar. Retrain legacy artifacts that lack a checksum or the required
+evaluation provenance.
 
 Commands:
 
 ```powershell
-# 1. Validate raw data, write reports/artifacts/data_report.json
+# 1. Validate train/validation, then preflight all splits before fitting
 vfi prepare-data --config configs/baseline.yaml
+vfi evaluate --preflight-only --config configs/baseline.yaml
 
 # 2. Train both baselines; select on validation; save artifacts + report
 vfi train --config configs/baseline.yaml
@@ -75,5 +103,13 @@ vfi evaluate --model-id majority --config configs/baseline.yaml
 - No metric is reported unless produced by a real run on real, legitimately
   obtained data. Synthetic-fixture unit tests are not model evaluations.
 - The test split is never used for any selection decision.
+- Repeatedly inspecting test results and changing the model in response amounts
+  to implicit test tuning. Finalize selection before scoring and record any
+  subsequent iterations separately.
 - Zero-division handling and any degenerate behavior (e.g., the majority
   baseline's one-hot probabilities) are documented, never hidden.
+- The baseline training command requires all three canonical classes in the
+  effective train set. For prediction, Logistic Regression provides one column
+  per fitted class. A trusted binary artifact lists omitted classes in
+  `untrained_labels`. The majority baseline reports a constant one-hot vector
+  over the canonical labels.

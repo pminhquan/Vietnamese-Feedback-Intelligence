@@ -2,8 +2,8 @@
 #
 # Split discipline: `use_official_splits: true` trains on the official
 # UIT-VSFC train file and selects on the official validation (dev) file.
-# The official test file is only used by `vfi evaluate` after model
-# selection is finalized.
+# Only `vfi evaluate` reads the official test files. Run `--preflight-only`
+# before fitting and score after finalizing model selection.
 
 data:
   raw_dir: data/raw/uit_vsfc

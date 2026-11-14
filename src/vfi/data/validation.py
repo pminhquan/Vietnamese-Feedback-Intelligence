@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 from collections import Counter, defaultdict
 from collections.abc import Sequence
+from itertools import combinations
 
 from vfi.data.loading import CANONICAL_LABELS, Record, normalize_text
 
@@ -63,6 +64,26 @@ def class_distribution(records: Sequence[Record]) -> dict[str, int]:
     """Count records per canonical label (all labels present as keys)."""
     counts: Counter[str] = Counter(record.label for record in records)
     return {label: counts.get(label, 0) for label in CANONICAL_LABELS}
+
+
+def leakage_summary(*split_records: tuple[str, Sequence[Record]]) -> dict[str, object]:
+    """Aggregate exact-match conflicts without exposing text or per-record IDs.
+
+    A text occurring in three splits contributes once to the total and once
+    to each of the three split pairs. Labels do not affect duplicate detection.
+    ``find_leakage`` returns private text for in-memory use only.
+    """
+    leakage = find_leakage(*split_records)
+    pairs = combinations([name for name, _ in split_records], 2)
+    return {
+        "cross_split_duplicate_texts": len(leakage),
+        "split_pair_counts": {
+            f"{left}/{right}": sum(
+                left in splits and right in splits for splits in leakage.values()
+            )
+            for left, right in pairs
+        },
+    }
 
 
 def fingerprint(records: Sequence[Record]) -> str:

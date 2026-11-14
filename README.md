@@ -49,8 +49,9 @@ python scripts\verify.py
 ## CLI
 
 ```powershell
-# Validate raw data and report duplicates/leakage/distribution
+# Summarize train/validation and check all split pairs before fitting
 vfi prepare-data --config configs\baseline.yaml
+vfi evaluate --preflight-only --config configs\baseline.yaml
 
 # Train baselines (fit on train, select on validation; test untouched)
 vfi train --config configs\baseline.yaml
@@ -81,4 +82,6 @@ vfi predict --text "Giảng viên giải thích rất dễ hiểu"
   data only.
 - Vietnamese-safe preprocessing: Unicode NFC + whitespace collapse; no
   stopword removal, no diacritic stripping.
-- Artifacts carry provenance metadata; loading refuses untrusted artifacts.
+- Load Joblib artifacts only from your own local training runs. Metadata and
+  checksums help detect mismatches, and can be forged. Retrain older artifacts
+  to use the benchmark provenance checks.

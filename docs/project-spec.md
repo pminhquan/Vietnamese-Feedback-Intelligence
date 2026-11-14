@@ -17,8 +17,8 @@ the model supports them.
    Regression.
 3. Correct classification metrics with explicit zero-division behavior;
    macro-F1 as the primary model-selection metric.
-4. Split discipline: official train/validation/test splits; the test split is
-   only evaluated after model selection is finalized.
+4. Split discipline: preflight checks split integrity through `vfi evaluate`.
+   Test scoring follows final model selection.
 5. A minimal local inference CLI (`vfi predict`).
 6. Focused tests (synthetic fixtures only) and CPU-only CI.
 
@@ -59,7 +59,8 @@ Design principles:
   training-time preprocessing and inference-time preprocessing cannot drift.
 - Artifacts are `models/<model_id>/model.joblib` plus `meta.json` with full
   provenance (config hash, dataset fingerprints, library versions, seed).
-  Loading checks the sidecar before deserializing (trusted-artifact policy).
+  Loading checks the sidecar and checksum before deserializing. Load only your
+  own local artifacts because Joblib can execute code during deserialization.
 
 ## Acceptance criteria (Phase 1)
 
@@ -72,7 +73,7 @@ Design principles:
 - [x] Metrics correctness verified against hand-computed examples.
 - [ ] Real experiment results — **blocked** by dataset license; no numbers
       are reported until data access is legitimately obtained.
-- [x] CLI inference works against any locally trained artifact.
+- [x] CLI inference works against a trusted local artifact with current metadata.
 - [x] CI green on the Draft PR head.
 - [x] README/HANDOFF sufficient for another developer to reproduce.
 - [x] No dataset files, model weights, or secrets committed.

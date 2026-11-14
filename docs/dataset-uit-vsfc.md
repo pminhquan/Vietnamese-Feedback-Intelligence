@@ -77,7 +77,8 @@ lecturers. Even with permission to use the data:
 2. Sign and return the agreement; receive the download link from the author.
 3. Place the files locally (never commit them) following `data/README.md`.
 4. Verify the raw label encoding against the author's README, then run:
-   `vfi prepare-data` → `vfi train` → `vfi evaluate` per
+   `vfi prepare-data` → `vfi evaluate --preflight-only` → `vfi train` →
+   `vfi evaluate --model-id ...` per
    `docs/experiment-protocol.md` and record the real numbers in `reports/`.
 
 Until then, no experiment numbers are produced or claimed in this repo.

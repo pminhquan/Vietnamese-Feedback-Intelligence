@@ -95,11 +95,11 @@ def load_split(raw_dir: str | Path, split: str) -> list[Record]:
             raw_label = int(sentiment.strip())
         except ValueError as exc:
             raise DataLoadingError(
-                f"Split {split!r} line {line_no}: non-integer sentiment label {sentiment!r}"
+                f"Split {split!r} line {line_no}: non-integer sentiment label"
             ) from exc
         if raw_label not in RAW_SENTIMENT_TO_LABEL:
             raise DataLoadingError(
-                f"Split {split!r} line {line_no}: unknown sentiment label {raw_label}; "
+                f"Split {split!r} line {line_no}: unknown sentiment label; "
                 f"expected one of {sorted(RAW_SENTIMENT_TO_LABEL)}"
             )
         records.append(Record(text=text, label=RAW_SENTIMENT_TO_LABEL[raw_label], split=split))

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Sequence
+from dataclasses import replace
 
 from sklearn.model_selection import train_test_split
 
@@ -44,4 +45,7 @@ def stratified_split(
         random_state=seed,
         stratify=[record.label for record in records],
     )
-    return list(train), list(validation)
+    return (
+        [replace(record, split="train") for record in train],
+        [replace(record, split="validation") for record in validation],
+    )

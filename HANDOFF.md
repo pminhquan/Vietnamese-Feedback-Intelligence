@@ -1,6 +1,6 @@
 # HANDOFF — Reproducing and continuing VFI Phase 1
 
-Last updated: 2026-11-07 (Phase 1 on branch `phase1/classical-ml-baselines`).
+Last updated: 2026-11-14 (Phase 1 on branch `phase1/classical-ml-baselines`).
 
 ## Current state
 
@@ -45,10 +45,11 @@ vfi predict --text "Giảng viên giải thích rất dễ hiểu"
 1. Follow `docs/dataset-uit-vsfc.md` to obtain and place the corpus under
    `data/raw/uit_vsfc/` (layout in `data/README.md`). The directory is
    gitignored; never commit it.
-2. Validate + report:
+2. Validate train/validation and record a clean preflight before training:
 
    ```powershell
    vfi prepare-data --config configs\baseline.yaml
+   vfi evaluate --preflight-only --config configs\baseline.yaml
    ```
 
 3. Train + select on validation:
@@ -66,6 +67,10 @@ vfi predict --text "Giảng viên giải thích rất dễ hiểu"
 
 5. Write the milestone Markdown report in `reports/` from the JSON artifacts
    in `reports/artifacts/` (gitignored). Quote no raw student text.
+
+Use the same configuration throughout. Evaluation checks the original preflight
+and current split fingerprints before scoring. Retrain legacy artifacts with the
+current workflow. Load Joblib files only from your own local training runs.
 
 ## Repo map
 

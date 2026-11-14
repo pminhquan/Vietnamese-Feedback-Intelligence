@@ -127,13 +127,13 @@ class TestArtifacts:
     def test_save_load_roundtrip(self, tmp_path: Path) -> None:
         model = MajorityBaseline().fit(make_records(2))
         metadata = build_training_metadata(
-            AppConfig(), {"train": "abc123"}, extra={"model_id": MODEL_IDS["majority"]}
+            AppConfig(), {"train": "a" * 64}, extra={"model_id": MODEL_IDS["majority"]}
         )
         save_model(tmp_path, MODEL_IDS["majority"], model, metadata)
         loaded, loaded_meta = load_model(tmp_path, MODEL_IDS["majority"])
         assert loaded.predict(["a", "b"]) == model.predict(["a", "b"])
         assert loaded_meta["config_hash"] == metadata["config_hash"]
-        assert loaded_meta["dataset_fingerprints"] == {"train": "abc123"}
+        assert loaded_meta["dataset_fingerprints"] == {"train": "a" * 64}
 
     def test_load_missing_model_raises_clearly(self, tmp_path: Path) -> None:
         with pytest.raises(FileNotFoundError, match="vfi train"):
