@@ -1,0 +1,32 @@
+# Phase 1 baseline configuration.
+#
+# Split discipline: `use_official_splits: true` trains on the official
+# UIT-VSFC train file and selects on the official validation (dev) file.
+# Only `vfi evaluate` reads the official test files. Run `--preflight-only`
+# before fitting and score after finalizing model selection.
+
+data:
+  raw_dir: data/raw/uit_vsfc
+  use_official_splits: true
+  # Only used when use_official_splits is false (deterministic stratified
+  # fallback split carved from the official train file).
+  validation_size: 0.2
+  seed: 42
+
+models:
+  tfidf_logreg:
+    # Base configuration; `vfi train` additionally evaluates the documented
+    # 4-candidate search space (word/char_wb x C) on the validation split.
+    analyzer: word
+    ngram_range: [1, 2]
+    min_df: 2
+    max_df: 0.95
+    sublinear_tf: true
+    C: 4.0
+    max_iter: 1000
+    class_weight: balanced
+    random_state: 42
+
+output:
+  model_dir: models
+  reports_dir: reports/artifacts
