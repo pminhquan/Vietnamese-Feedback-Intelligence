@@ -12,7 +12,8 @@ the model supports them.
 ### In scope (Phase 1)
 
 1. Dataset foundations: verified loading, validation, leakage checks, and
-   fingerprints for the UIT-VSFC format.
+   fingerprints for authorized local datasets. Includes local human annotation
+   and grouped export for owner-collected feedback.
 2. Classical baselines: majority-class classifier and TF-IDF + Logistic
    Regression.
 3. Correct classification metrics with explicit zero-division behavior;
@@ -35,7 +36,9 @@ the model supports them.
 ```text
 src/vfi/
 ├── config.py               # dataclass configs + YAML loading/validation
+├── custom_dataset.py       # local annotation, approval and grouped export
 ├── data/
+│   ├── adapters.py         # local split sources and dataset-specific provenance
 │   ├── loading.py          # UIT-VSFC file format -> Record objects; normalize_text
 │   ├── validation.py       # duplicates, cross-split leakage, distribution, fingerprints
 │   └── splitting.py        # deterministic stratified fallback split
@@ -44,14 +47,14 @@ src/vfi/
 │                           # artifact save/load with metadata sidecar
 ├── evaluation/
 │   └── metrics.py          # metrics + documented latency protocol
-└── cli.py                  # prepare-data | train | evaluate | predict
+└── cli.py                  # dataset | prepare-data | train | evaluate | predict
 ```
 
 Design principles:
 
-- One canonical label space (`negative=0, neutral=1, positive=2`); the raw
-  UIT-VSFC integer mapping (`0=positive, 1=negative, 2=neutral`) is converted
-  at load time in one documented place.
+- One canonical label space for the baselines (`negative=0, neutral=1,
+  positive=2`). The selected adapter records how it interprets source labels.
+  UIT-VSFC requires explicit mapping evidence. NEU-ESC Toxic remains distinct.
 - Minimal, Vietnamese-safe normalization: Unicode NFC + whitespace collapse.
   No lowercasing in the pipeline input (TF-IDF handles it), no stopword
   removal, no diacritic stripping — those carry Vietnamese sentiment signal.
@@ -71,8 +74,8 @@ Design principles:
 - [x] Data pipeline with automated regression tests (synthetic fixtures).
 - [x] Both classical baselines implemented and tested.
 - [x] Metrics correctness verified against hand-computed examples.
-- [ ] Real experiment results — **blocked** by dataset license; no numbers
-      are reported until data access is legitimately obtained.
+- [ ] Real experiment results require an authorized labeled dataset with a
+      defensible holdout.
 - [x] CLI inference works against a trusted local artifact with current metadata.
 - [x] CI green on the Draft PR head.
 - [x] README/HANDOFF sufficient for another developer to reproduce.
@@ -83,8 +86,8 @@ Design principles:
 
 - No real-data experiment results yet; the pipeline is validated on
   synthetic fixtures only. Unit tests passing does NOT measure model quality.
-- Cross-split leakage detection is exact-match after normalization;
-  near-duplicate leakage is not detected.
+- Exact normalized overlap blocks evaluation. The bounded near-duplicate audit
+  provides similarity candidates for review.
 - ` MajorityBaseline` probabilities are degenerate one-hot values, reported
   as-is for honesty.
 - The hyperparameter search space is intentionally small (4 candidates);

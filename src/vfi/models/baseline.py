@@ -16,10 +16,11 @@ import time
 import warnings
 from collections import Counter
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass, replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 import joblib
@@ -28,7 +29,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 
-from vfi.config import AppConfig, TfidfLogRegConfig, config_hash
+from vfi.config import AppConfig, TfidfLogRegConfig, config_hash, config_to_dict
 from vfi.data.loading import CANONICAL_LABELS, LABEL_TO_ID, Record
 from vfi.data.validation import validate_records
 from vfi.evaluation.metrics import compute_metrics
@@ -187,15 +188,23 @@ def save_model(
         )
     out_dir = Path(model_dir) / model_id
     out_dir.mkdir(parents=True, exist_ok=True)
-    joblib.dump(model, out_dir / "model.joblib")
-    metadata = {
-        **metadata,
-        "artifact_sha256": hashlib.sha256((out_dir / "model.joblib").read_bytes()).hexdigest(),
-    }
-    (out_dir / "meta.json").write_text(
-        json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
+    # Bind metadata to this serialization before publishing either file.
+    # An interleaved replacement can leave a mismatch, which load_model rejects.
+    with TemporaryDirectory(dir=out_dir) as temporary:
+        stage = Path(temporary)
+        model_path = stage / "model.joblib"
+        metadata_path = stage / "meta.json"
+        joblib.dump(model, model_path)
+        metadata = {
+            **metadata,
+            "artifact_sha256": hashlib.sha256(model_path.read_bytes()).hexdigest(),
+        }
+        metadata_path.write_text(
+            json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        model_path.replace(out_dir / model_path.name)
+        metadata_path.replace(out_dir / metadata_path.name)
     return out_dir
 
 
@@ -309,5 +318,5 @@ def build_training_metadata(
 
 
 def config_to_dict_safe(config: AppConfig) -> dict[str, Any]:
-    """JSON-safe config dict (tuples become lists via asdict -> json)."""
-    return json.loads(json.dumps(asdict(config), sort_keys=True))
+    """Return JSON-compatible experiment settings with private evidence redacted."""
+    return json.loads(json.dumps(config_to_dict(config), sort_keys=True))

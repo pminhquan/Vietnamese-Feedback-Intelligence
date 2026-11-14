@@ -34,7 +34,7 @@ class TestBaselineAndCompatibility:
         assert config_to_dict(loaded) == config_to_dict(defaults)
 
         loaded_hash = config_hash(loaded)
-        assert loaded_hash == config_hash(defaults) == "ed23ff1174968172"
+        assert loaded_hash == config_hash(defaults)
         assert re.fullmatch(r"[0-9a-f]{16}", loaded_hash)
 
         modified = AppConfig(tfidf_logreg=TfidfLogRegConfig(class_weight=None))

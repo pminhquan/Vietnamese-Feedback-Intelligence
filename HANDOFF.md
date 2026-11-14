@@ -7,9 +7,10 @@ Last updated: 2026-11-14 (Phase 1 on branch `phase1/classical-ml-baselines`).
 - `main` contains only the bootstrap commit (metadata, README, .gitignore,
   pyproject).
 - Phase 1 work lives on `phase1/classical-ml-baselines` behind a Draft PR.
-- **Dataset blocker:** UIT-VSFC requires a signed user agreement
-  (`docs/dataset-uit-vsfc.md`). All code is done and tested on synthetic
-  fixtures; real experiments are pending data access. No metrics are claimed.
+- The integration branch adds local dataset adapters and a human annotation
+  workflow. Real experiments require an authorized labeled source with a
+  defensible holdout. UIT-VSFC is optional and requires a signed agreement
+  and confirmed label mapping. Tests use synthetic fixtures.
 
 ## One-time setup (Windows PowerShell)
 
@@ -42,9 +43,9 @@ vfi predict --text "Giảng viên giải thích rất dễ hiểu"
 
 ## Running real experiments (once data access is granted)
 
-1. Follow `docs/dataset-uit-vsfc.md` to obtain and place the corpus under
-   `data/raw/uit_vsfc/` (layout in `data/README.md`). The directory is
-   gitignored; never commit it.
+1. Build an independent dataset using `vfi dataset` as shown in the README,
+   or place an authorized local dataset under an ignored path. Choose its
+   adapter, version and access policy using the layout in `data/README.md`.
 2. Validate train/validation and record a clean preflight before training:
 
    ```powershell
@@ -89,6 +90,6 @@ reports/                   # committed milestone reports (+ gitignored artifacts
 
 - Commit messages: conventional, English, focused (`feat(data): ...`).
 - Branches: `phase1/...`, future `phase2/...`.
-- CI: GitHub Actions runs ruff + pytest on push/PR to `main` (no data
-  downloads, CPU-only).
+- CI runs Ruff, pytest and the structural gate for PRs to `main` and
+  stacked PRs to `phase1/classical-ml-baselines`. Tests run offline on CPU.
 - PRs: Draft until reviewed; merge requires the owner's explicit approval.

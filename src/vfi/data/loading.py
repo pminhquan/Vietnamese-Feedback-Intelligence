@@ -5,18 +5,18 @@ line in ``sentences.txt`` and one integer sentiment label per line in
 ``sentiments.txt``. Lines are aligned by position within each split directory
 (``train``, ``validation``, ``test``).
 
-Label mapping source: the SEACrowd loader script declares
-``ClassLabel(names=["positive", "negative", "neutral"])`` for the raw
-sentiment integers, so ``0=positive, 1=negative, 2=neutral``. VFI remaps
-these into its own canonical, alphabetically ordered label space
-(``negative=0, neutral=1, positive=2``) so all downstream code deals with a
-single, documented mapping.
+The historical low-level default follows the SEACrowd loader and remains
+available as a synthetic-format fixture convenience. The authors' dataset card
+describes a different ordering. The experiment adapter requires an explicit
+mapping and provenance before reading any UIT-VSFC files.
 """
 
 from __future__ import annotations
 
+import hashlib
 import re
 import unicodedata
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -45,6 +45,33 @@ class Record:
     split: str
 
 
+def parse_label_mapping(spec: str) -> dict[int, str]:
+    """Parse raw UIT-VSFC integers onto a permutation of canonical labels."""
+    mapping: dict[int, str] = {}
+    for pair in spec.split(","):
+        raw, sep, label = pair.partition(":")
+        label = label.strip().lower()
+        raw = raw.strip()
+        if not sep or raw not in {"0", "1", "2"} or label not in CANONICAL_LABELS:
+            raise DataLoadingError("Invalid label mapping: use 0, 1 and 2 with canonical labels")
+        key = int(raw)
+        if key in mapping:
+            raise DataLoadingError("Invalid label mapping: raw integers must be unique")
+        mapping[key] = label
+    _validate_label_mapping(mapping)
+    return mapping
+
+
+def _validate_label_mapping(mapping: Mapping[int, str]) -> None:
+    if (
+        len(mapping) != len(CANONICAL_LABELS)
+        or any(type(raw) is not int or raw not in {0, 1, 2} for raw in mapping)
+        or any(not isinstance(label, str) for label in mapping.values())
+        or set(mapping.values()) != set(CANONICAL_LABELS)
+    ):
+        raise DataLoadingError("Invalid label mapping: each raw integer needs a distinct label")
+
+
 def normalize_text(text: str) -> str:
     """Minimal, Vietnamese-safe text normalization.
 
@@ -59,14 +86,20 @@ def normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _read_lines(path: Path) -> list[str]:
-    if not path.exists():
-        raise DataLoadingError(f"Expected dataset file is missing: {path}")
-    # utf-8-sig tolerates a byte-order mark written by Windows editors.
-    return path.read_text(encoding="utf-8-sig").splitlines()
+def _read_lines(path: Path, split: str) -> tuple[list[str], str]:
+    try:
+        contents = path.read_bytes()
+        # utf-8-sig tolerates a byte-order mark written by Windows editors.
+        return contents.decode("utf-8-sig").splitlines(), hashlib.sha256(contents).hexdigest()
+    except FileNotFoundError:
+        raise DataLoadingError(f"Split {split!r}: {path.name} is missing") from None
+    except (OSError, UnicodeError):
+        raise DataLoadingError(f"Split {split!r}: cannot read UTF-8 {path.name}") from None
 
 
-def load_split(raw_dir: str | Path, split: str) -> list[Record]:
+def load_split(
+    raw_dir: str | Path, split: str, label_mapping: Mapping[int, str] | None = None
+) -> list[Record]:
     """Load one split from ``<raw_dir>/<split>/{sentences,sentiments}.txt``.
 
     Raises:
@@ -74,11 +107,21 @@ def load_split(raw_dir: str | Path, split: str) -> list[Record]:
             sentence, or an unknown/non-integer label (message includes the
             offending line number).
     """
+    records, _ = load_split_snapshot(raw_dir, split, label_mapping)
+    return records
+
+
+def load_split_snapshot(
+    raw_dir: str | Path, split: str, label_mapping: Mapping[int, str] | None = None
+) -> tuple[list[Record], str]:
+    """Read one split, binding its source fingerprint to the parsed bytes."""
     if split not in SPLITS:
-        raise DataLoadingError(f"Unknown split {split!r}; expected one of {SPLITS}")
+        raise DataLoadingError(f"Unknown split; expected one of {SPLITS}")
+    mapping = RAW_SENTIMENT_TO_LABEL if label_mapping is None else label_mapping
+    _validate_label_mapping(mapping)
     split_dir = Path(raw_dir) / split
-    sentences = _read_lines(split_dir / "sentences.txt")
-    sentiments = _read_lines(split_dir / "sentiments.txt")
+    sentences, text_digest = _read_lines(split_dir / "sentences.txt", split)
+    sentiments, label_digest = _read_lines(split_dir / "sentiments.txt", split)
     if len(sentences) != len(sentiments):
         raise DataLoadingError(
             f"Split {split!r} is misaligned: {len(sentences)} sentences vs "
@@ -93,19 +136,24 @@ def load_split(raw_dir: str | Path, split: str) -> list[Record]:
             raise DataLoadingError(f"Split {split!r} line {line_no}: empty sentence text")
         try:
             raw_label = int(sentiment.strip())
-        except ValueError as exc:
+        except ValueError:
             raise DataLoadingError(
                 f"Split {split!r} line {line_no}: non-integer sentiment label"
-            ) from exc
-        if raw_label not in RAW_SENTIMENT_TO_LABEL:
+            ) from None
+        if raw_label not in mapping:
             raise DataLoadingError(
                 f"Split {split!r} line {line_no}: unknown sentiment label; "
-                f"expected one of {sorted(RAW_SENTIMENT_TO_LABEL)}"
+                f"expected one of {sorted(mapping)}"
             )
-        records.append(Record(text=text, label=RAW_SENTIMENT_TO_LABEL[raw_label], split=split))
-    return records
+        records.append(Record(text=text, label=mapping[raw_label], split=split))
+    digest = hashlib.sha256((text_digest + label_digest).encode("ascii")).hexdigest()
+    return records, digest
 
 
-def load_dataset(raw_dir: str | Path, splits: tuple[str, ...] = SPLITS) -> dict[str, list[Record]]:
+def load_dataset(
+    raw_dir: str | Path,
+    splits: tuple[str, ...] = SPLITS,
+    label_mapping: Mapping[int, str] | None = None,
+) -> dict[str, list[Record]]:
     """Load the requested splits into ``{split_name: [Record, ...]}``."""
-    return {split: load_split(raw_dir, split) for split in splits}
+    return {split: load_split(raw_dir, split, label_mapping) for split in splits}

@@ -75,7 +75,18 @@ def write_test_config(
     ``min_df`` is lowered to 1 because synthetic corpora are tiny.
     """
     config = {
-        "data": {"raw_dir": str(raw_dir), "use_official_splits": True, "seed": seed},
+        "data": {
+            "raw_dir": str(raw_dir),
+            "use_official_splits": True,
+            "seed": seed,
+            "dataset_adapter": "uit_vsfc",
+            "dataset_id": "uit_format_test_fixture",
+            "dataset_version": "fixture-v1",
+            "synthetic_fixture": True,
+            "label_mapping": "0:positive,1:negative,2:neutral",
+            "label_mapping_source": "synthetic_fixture",
+            "label_mapping_evidence": "Tests generate labels with this encoding.",
+        },
         "models": {
             "tfidf_logreg": {
                 "analyzer": "word",

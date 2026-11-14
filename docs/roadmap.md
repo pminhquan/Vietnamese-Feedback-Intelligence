@@ -5,14 +5,13 @@ Status legend: `[ ]` not started · `[~]` blocked/partial · `[x]` done.
 ## Phase 1 — Classical ML foundation (current)
 
 - [x] Bootstrap repository, environment, CI.
-- [x] Dataset investigation → **blocked**: license must be verified; the
-      author requires a signed corpus user agreement (see
-      `docs/dataset-uit-vsfc.md`).
+- [x] Dataset investigation and local adapters. Optional UIT-VSFC access
+      requires a signed agreement and verified raw label mapping.
 - [x] Data pipeline (loading/validation/splitting) + tests.
 - [x] Majority baseline + TF-IDF + Logistic Regression + tests.
 - [x] Metrics, latency protocol, reproducible experiment records.
 - [x] Minimal inference CLI.
-- [~] Real experiments on UIT-VSFC — blocked until data access is granted.
+- [~] Real experiments await authorized data and a defensible test holdout.
 
 ## Phase 2 — Deep learning (NOT started; do not begin without approval)
 
@@ -40,10 +39,9 @@ Status legend: `[ ]` not started · `[~]` blocked/partial · `[x]` done.
 
 ## Immediate next actions for the owner
 
-1. Request UIT-VSFC access: email `kietnv@uit.edu.vn` (Mr. Kiet Nguyen) to
-   sign the corpus user agreement. Details in `docs/dataset-uit-vsfc.md`.
+1. Collect and human-review an independent dataset or choose an authorized
+   source using the README's adapter workflow.
 2. Complete the OWNER LEARNING TASKS in `docs/learning-notes.md`.
-3. Once the signed agreement arrives: place the raw files under
-   `data/raw/uit_vsfc/` (layout in `data/README.md`), run
-   `python scripts/verify.py`, then the protocol commands, and record real
-   results in `reports/`.
+3. Place the files under an ignored local path and run the verification gate.
+   Follow the preflight, training and evaluation protocol on the selected
+   dataset. Record aggregate results in `reports/`.
