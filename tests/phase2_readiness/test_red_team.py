@@ -123,6 +123,7 @@ def test_output_trailing_space_component_bypass_writes_inside_fixture_repo(
     assert not (fixture_repo / "subdir" / "leak.json").exists()
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="requires native Windows drive-letter paths")
 def test_unc_admin_share_spelling_is_refused(tmp_path: Path) -> None:
     """Reproduced (API level): UNC spelling of a repo path is not refused.
 

@@ -11,6 +11,7 @@ import importlib.util
 import json
 import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,10 @@ def _load_tool() -> Any:
 
 
 hardware_probe = _load_tool()
+
+requires_windows_drive_paths = pytest.mark.skipif(
+    sys.platform != "win32", reason="requires native Windows drive-letter paths"
+)
 
 FAKE_SMI_CSV = (
     "NVIDIA GeForce RTX 3060 Laptop GPU, 6144, 617.42, 8.6\n"
@@ -333,6 +338,7 @@ def test_output_trailing_space_component_inside_repo_is_refused(
     assert "refusing" in captured.err
 
 
+@requires_windows_drive_paths
 def test_output_unc_repo_spelling_is_refused(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
@@ -369,6 +375,7 @@ def test_output_foreign_unc_path_is_refused(capsys: pytest.CaptureFixture[str]) 
         assert "UNC" in captured.err, crafted
 
 
+@requires_windows_drive_paths
 def test_resolve_output_maps_local_admin_share_spelling(tmp_path: Path) -> None:
     r"""A local admin-share spelling resolves to its drive-letter path.
 
@@ -383,6 +390,7 @@ def test_resolve_output_maps_local_admin_share_spelling(tmp_path: Path) -> None:
     assert hardware_probe._repo_internal_refusal(resolved) is None
 
 
+@requires_windows_drive_paths
 def test_resolve_output_maps_repo_internal_admin_share_to_refusal() -> None:
     r"""A UNC spelling of a repo path maps to the repo path and is refused."""
     tail = str(REPO_ROOT)[3:]  # repo path below the drive root
@@ -392,6 +400,7 @@ def test_resolve_output_maps_repo_internal_admin_share_to_refusal() -> None:
     assert hardware_probe._repo_internal_refusal(resolved) is not None
 
 
+@requires_windows_drive_paths
 def test_repo_internal_refusal_rejects_drive_relative_paths() -> None:
     r"""A drive-relative destination (``C:relative\out.json``) is refused outright.
 
@@ -514,7 +523,8 @@ def test_sensitive_values_survive_environment_spoofing(monkeypatch: pytest.Monke
     os.getlogin() asks the OS for the logon-session name and ignores the
     environment on Windows.
     """
-    real_login = os.getlogin()
+    real_login = "os_reported_session_login"
+    monkeypatch.setattr(os, "getlogin", lambda: real_login)
     for var in ("LOGNAME", "USER", "LNAME", "USERNAME"):
         monkeypatch.setenv(var, "innocent_user_1")
     monkeypatch.setenv("USERPROFILE", "C:/Users/innocent_home")
