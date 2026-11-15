@@ -1,0 +1,25 @@
+# Copy to the ignored run directory before recording authorization.
+data:
+  raw_dir: data/datasets/neu_esc/daf543ad/splits
+  dataset_adapter: neu_esc
+  dataset_id: neu_esc
+  dataset_version: daf543ad1992153cd2be9fec3cb59aa0fc714147
+  rights_confirmed: false
+  synthetic_fixture: false
+  use_official_splits: true
+  seed: 42
+  toxic_policy: exclude
+  toxic_justification: Toxic is a distinct source label outside the three-class sentiment task.
+
+models:
+  tfidf_logreg:
+    min_df: 2
+    max_df: 0.95
+    sublinear_tf: true
+    max_iter: 1000
+    class_weight: balanced
+    random_state: 42
+
+output:
+  model_dir: models/neu-esc-daf543ad-baselines
+  reports_dir: reports/artifacts/neu-esc-daf543ad-baselines
