@@ -14,14 +14,14 @@ venv/
 htmlcov/
 
 # --- Environment / secrets ---
-.env
-.env.*
+.env*
 *.key
 
 # --- Local datasets: NEVER commit raw or processed data ---
 data/raw/
 data/processed/
 data/external/
+data/datasets/
 data/*.csv
 data/*.tsv
 data/*.jsonl
@@ -29,12 +29,17 @@ data/*.parquet
 data/*.zip
 !data/README.md
 
-# --- Model artifacts / experiment outputs ---
-models/
-reports/artifacts/
+# --- Model artifacts / experiment outputs (root-anchored) ---
+/models/
+/reports/artifacts/
 *.joblib
 *.pkl
 *.safetensors
+*.bin
+*.pt
+*.ckpt
+*.onnx
+*.h5
 
 # --- OS / editor noise ---
 .DS_Store

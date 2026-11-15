@@ -14,13 +14,15 @@ dependencies = [
     "numpy>=1.26",
     "pandas>=2.1",
     "scikit-learn>=1.4",
+    "joblib>=1.3",
     "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
-    "ruff>=0.4",
+    # Pinned for deterministic lint between local runs and CI.
+    "ruff==0.17.4",
 ]
 
 [project.scripts]
