@@ -1,0 +1,36 @@
+# Phase 1 baseline configuration.
+#
+# Default to an independent, human-labeled local dataset.
+# Only `vfi evaluate` reads test files. Run `--preflight-only` before fitting
+# and score after finalizing model selection.
+
+data:
+  raw_dir: data/datasets/owner_feedback/v1/splits
+  dataset_adapter: custom_jsonl
+  dataset_id: owner_feedback
+  dataset_version: v1
+  rights_confirmed: false  # Declare true only after verifying permitted use.
+  synthetic_fixture: false
+  use_official_splits: true
+  # Only used when use_official_splits is false (deterministic stratified
+  # fallback split carved from the physical train file).
+  validation_size: 0.2
+  seed: 42
+
+models:
+  tfidf_logreg:
+    # Base configuration; `vfi train` additionally evaluates the documented
+    # 4-candidate search space (word/char_wb x C) on the validation split.
+    analyzer: word
+    ngram_range: [1, 2]
+    min_df: 2
+    max_df: 0.95
+    sublinear_tf: true
+    C: 4.0
+    max_iter: 1000
+    class_weight: balanced
+    random_state: 42
+
+output:
+  model_dir: models
+  reports_dir: reports/artifacts
