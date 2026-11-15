@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import joblib
 import pytest
 from tests.conftest import make_records
 
@@ -100,3 +101,24 @@ def test_missing_python_version_is_rejected_before_deserialization(
     monkeypatch.setattr("vfi.models.baseline.joblib.load", forbidden_load)
     with pytest.raises(FileNotFoundError, match="metadata"):
         load_model(tmp_path, model_id)
+
+
+def test_interleaved_saves_do_not_checksum_the_other_model(tmp_path: Path, monkeypatch) -> None:
+    model_id = MODEL_IDS["majority"]
+    rows = make_records(2)
+    first = MajorityBaseline().fit([record for record in rows if record.label == "negative"])
+    second = MajorityBaseline().fit([record for record in rows if record.label == "positive"])
+    metadata = build_training_metadata(AppConfig(), {}, {"model_id": model_id})
+    original = joblib.dump
+
+    def dump_with_interleaved_save(model, target):
+        result = original(model, target)
+        if model is first:
+            save_model(tmp_path, model_id, second, {**metadata, "run": "second"})
+        return result
+
+    monkeypatch.setattr(joblib, "dump", dump_with_interleaved_save)
+    save_model(tmp_path, model_id, first, {**metadata, "run": "first"})
+    loaded, receipt = load_model(tmp_path, model_id)
+    assert receipt["run"] == "first"
+    assert loaded.predict(["fixture feedback"]) == ["negative"]

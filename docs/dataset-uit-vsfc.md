@@ -3,7 +3,7 @@
 Investigation date: 2026-11-07. Investigator: ZCode agent, on behalf of the
 repository owner. Verdict first, evidence below.
 
-## Verdict: BLOCKED — do not download yet
+## Optional adapter with access restrictions
 
 The license could not be verified from any authoritative source:
 
@@ -12,10 +12,9 @@ The license could not be verified from any authoritative source:
 - The **original author's distribution page** requires contacting the author
   and **signing a corpus user agreement** before receiving the data.
 
-Per this repository's data-safety rules, we do not silently download data
-whose usage terms are unverified. All Phase 1 code is complete and tested on
-synthetic fixtures; real experiments start once the owner obtains permission
-through the official channel.
+The owner chose to use independent data for Phase 1. UIT-VSFC remains an
+optional local adapter gated by the corpus agreement and confirmed label mapping.
+See the [independent dataset workflow](../README.md#build-an-independent-dataset).
 
 ## Candidate dataset facts (verified from sources, not invented)
 
@@ -30,15 +29,15 @@ through the official channel.
 | Topic label schema | `lecturer`, `training_program`, `others`, `facility` |
 | Raw file format | Line-aligned plain text: `sentences.txt` + `sentiments.txt` (+ `topics.txt`) per split |
 | Splits | Official `train` / `validation` (dev) / `test` (three Google Drive file pairs) |
-| Raw label encoding | Integer per line; the SEACrowd loader declares `ClassLabel(names=["positive","negative","neutral"])`, i.e. `0=positive, 1=negative, 2=neutral` |
+| Raw label encoding | Unresolved for the original files. SEACrowd and the author-published Hugging Face metadata declare different label orders. |
 | Quality signals (author-reported) | Inter-annotator agreement > 91% (sentiment), > 71% (topic); Maximum Entropy baseline ≈ 88% sentiment F1 |
 | HF mirror | `SEACrowd/uit_vsfc` (loading script only; data fetched from the original Google Drive) |
 
-**Caveat on the label mapping:** the `0=positive, 1=negative, 2=neutral`
-order is taken from the SEACrowd loader's `ClassLabel` declaration. When the
-owner obtains the corpus, verify a handful of lines against the author's
-README before trusting the mapping (the loading code and
-`docs/learning-notes.md` both call this out).
+SEACrowd declares `0=positive, 1=negative, 2=neutral`. The Phase 2 evidence
+review records the author-published Hugging Face order as
+`0=negative, 1=neutral, 2=positive`. These declarations do not resolve the
+encoding of the original `sentiments.txt` files. The experiment adapter
+requires an explicit mapping and evidence appropriate to the authorized files.
 
 ## Sources checked (2026-11-07)
 
@@ -69,7 +68,7 @@ lecturers. Even with permission to use the data:
   prefer paraphrase; never publish full sentences with personal references.
 - Reported metrics must be aggregates only.
 
-## How to unblock (owner action)
+## Requirements for optional UIT-VSFC use
 
 1. Email `kietnv@uit.edu.vn` (Mr. Kiet Nguyen), introduce yourself as a
    student doing a non-commercial educational/research project, and request
@@ -81,4 +80,4 @@ lecturers. Even with permission to use the data:
    `vfi evaluate --model-id ...` per
    `docs/experiment-protocol.md` and record the real numbers in `reports/`.
 
-Until then, no experiment numbers are produced or claimed in this repo.
+The independent adapters have their own access and label policies.

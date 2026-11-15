@@ -90,18 +90,19 @@ def test_train_blocks_leakage_before_model_fit(
 def test_train_never_requests_test_split(
     project: dict[str, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import vfi.cli as cli
+    opened = set()
+    original_open = Path.open
 
-    requested = []
+    def guarded_open(path, *args, **kwargs):
+        assert project["raw"] / "test" not in path.parents, "Training opened test data"
+        assert path.name != "evaluation_preflight.json", "Training opened the test receipt"
+        if path.name == "sentences.txt":
+            opened.add(path.parent.name)
+        return original_open(path, *args, **kwargs)
 
-    def guarded_load(raw_dir: str, splits: tuple[str, ...] = ("train", "validation", "test")):
-        assert "test" not in splits, "Training requested test features/labels"
-        requested.append(splits)
-        return load_dataset(raw_dir, splits=splits)
-
-    monkeypatch.setattr(cli, "load_dataset", guarded_load)
+    monkeypatch.setattr(Path, "open", guarded_open)
     assert main(["train", "--config", str(project["config"])]) == 0
-    assert requested == [("train", "validation")]
+    assert opened == {"train", "validation"}
     report = read_report(project, "training_report.json")
     assert set(report["dataset_fingerprints"]) == {"train", "validation"}
     assert set(report["split_sizes"]) == {"train", "validation"}

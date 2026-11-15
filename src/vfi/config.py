@@ -5,33 +5,57 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from dataclasses import asdict, dataclass, field
+import re
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 _ALLOWED_ANALYZERS = ("word", "char", "char_wb")
+DATASET_ADAPTERS = ("custom_jsonl", "five_level_csv", "neu_esc", "uit_vsfc")
 
 
 class ConfigError(Exception):
     """Raised when a configuration file is missing or invalid."""
 
 
+class _ConfigLoader(yaml.SafeLoader):
+    """Reject duplicate keys instead of silently taking the final value."""
+
+    def construct_mapping(self, node, deep=False):
+        if isinstance(node, yaml.MappingNode):
+            keys = set()
+            for key_node, _ in node.value:
+                if key_node.tag == "tag:yaml.org,2002:merge":
+                    continue  # Preserve standard YAML defaults via merge keys.
+                key = self.construct_object(key_node, deep=deep)
+                if not isinstance(key, str):
+                    raise ConfigError("Configuration keys must be strings")
+                if key in keys:
+                    raise ConfigError("Duplicate configuration key")
+                keys.add(key)
+        return super().construct_mapping(node, deep=deep)
+
+
 @dataclass(frozen=True)
 class DataConfig:
-    """Where raw data lives and how splits are derived.
+    """Select a local source and declare its split, mapping, and access policy."""
 
-    ``use_official_splits=True`` uses the official UIT-VSFC train/validation
-    (dev)/test files. When ``False``, a deterministic stratified validation
-    split is carved out of the official train file with ``validation_size``
-    and ``seed`` (the official test file is still used for testing).
-    """
-
-    raw_dir: str = "data/raw/uit_vsfc"
+    raw_dir: str = "data/datasets/owner_feedback/v1/splits"
     use_official_splits: bool = True
     validation_size: float = 0.2
     seed: int = 42
+    dataset_adapter: str = "custom_jsonl"
+    dataset_id: str = "owner_feedback"
+    dataset_version: str = "v1"
+    rights_confirmed: bool = False
+    synthetic_fixture: bool = False
+    label_mapping: str = ""
+    label_mapping_source: str = ""
+    label_mapping_evidence: str = ""
+    toxic_policy: str = "error"
+    toxic_justification: str = ""
 
 
 @dataclass(frozen=True)
@@ -63,8 +87,13 @@ class AppConfig:
 
 
 def config_to_dict(config: AppConfig) -> dict[str, Any]:
-    """Serialize a config to plain nested dicts (JSON/YAML compatible)."""
-    return asdict(config)
+    """Serialize experimental settings without free-text evidence in artifacts."""
+    payload = asdict(config)
+    for key in ("label_mapping_evidence", "toxic_justification"):
+        value = payload["data"][key]
+        if value:
+            payload["data"][key] = hashlib.sha256(value.encode("utf-8")).hexdigest()
+    return payload
 
 
 def config_hash(config: AppConfig) -> str:
@@ -81,35 +110,44 @@ def _ensure_mapping(raw: Any, section: str) -> dict[str, Any]:
     return raw
 
 
+def _reject_unknown(raw: dict[str, Any], allowed: set[str], section: str) -> None:
+    if set(raw) - allowed:
+        raise ConfigError(f"Unknown configuration key in {section}. Allowed: {sorted(allowed)}")
+
+
 def _parse_bool(value: Any, field_name: str) -> bool:
     if not isinstance(value, bool):
-        raise ConfigError(f"{field_name} must be a boolean, got {value!r}")
+        raise ConfigError(f"{field_name} must be a boolean")
     return value
 
 
 def _parse_int(value: Any, field_name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
-        raise ConfigError(f"{field_name} must be an integer, got {value!r}")
+        raise ConfigError(f"{field_name} must be an integer")
     return int(value)
 
 
 def _parse_float(value: Any, field_name: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ConfigError(f"{field_name} must be a finite number, got {value!r}")
-    result = float(value)
+        raise ConfigError(f"{field_name} must be a finite number")
+    try:
+        result = float(value)
+    except OverflowError as exc:
+        raise ConfigError(f"{field_name} must be a finite number") from exc
     if not math.isfinite(result):
-        raise ConfigError(f"{field_name} must be a finite number, got {value!r}")
+        raise ConfigError(f"{field_name} must be a finite number")
     return result
 
 
 def _parse_str(value: Any, field_name: str) -> str:
     if not isinstance(value, str) or not value.strip():
-        raise ConfigError(f"{field_name} must be a non-empty string, got {value!r}")
+        raise ConfigError(f"{field_name} must be a non-empty string")
     return value
 
 
 def _parse_data(raw: Any) -> DataConfig:
     raw = _ensure_mapping(raw, "data")
+    _reject_unknown(raw, {item.name for item in fields(DataConfig)}, "data")
     raw_dir = _parse_str(raw.get("raw_dir", DataConfig.raw_dir), "data.raw_dir")
     use_official_splits = _parse_bool(
         raw.get("use_official_splits", DataConfig.use_official_splits),
@@ -124,22 +162,63 @@ def _parse_data(raw: Any) -> DataConfig:
     seed = _parse_int(raw.get("seed", DataConfig.seed), "data.seed")
     if seed < 0:
         raise ConfigError("data.seed must be a non-negative integer")
+    adapter = raw.get("dataset_adapter", DataConfig.dataset_adapter)
+    if adapter not in DATASET_ADAPTERS:
+        raise ConfigError(f"data.dataset_adapter must be one of {DATASET_ADAPTERS}")
+    identifiers = {}
+    for key in ("dataset_id", "dataset_version"):
+        value = raw.get(key, getattr(DataConfig, key))
+        if (
+            not isinstance(value, str)
+            or re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}", value) is None
+        ):
+            raise ConfigError(f"data.{key} must be a short non-sensitive identifier")
+        identifiers[key] = value
+    policies = {}
+    for key in (
+        "label_mapping",
+        "label_mapping_source",
+        "label_mapping_evidence",
+        "toxic_justification",
+    ):
+        value = raw.get(key, "")
+        if not isinstance(value, str):
+            raise ConfigError(f"data.{key} must be a string")
+        policies[key] = value.strip()
+    if adapter != "uit_vsfc" and any(
+        policies[key] for key in ("label_mapping", "label_mapping_source", "label_mapping_evidence")
+    ):
+        raise ConfigError("Raw integer mapping overrides apply only to the uit_vsfc adapter")
+    toxic_policy = raw.get("toxic_policy", DataConfig.toxic_policy)
+    if toxic_policy not in ("error", "exclude", "keep"):
+        raise ConfigError("data.toxic_policy must be error, exclude, or keep")
+    if adapter != "neu_esc" and (toxic_policy != "error" or policies["toxic_justification"]):
+        raise ConfigError("Toxic handling applies only to the neu_esc adapter")
+    if toxic_policy != "error" and not policies["toxic_justification"]:
+        raise ConfigError("data.toxic_justification is required for exclude or keep")
     return DataConfig(
         raw_dir=raw_dir,
         use_official_splits=use_official_splits,
         validation_size=validation_size,
         seed=seed,
+        dataset_adapter=adapter,
+        rights_confirmed=_parse_bool(raw.get("rights_confirmed", False), "data.rights_confirmed"),
+        synthetic_fixture=_parse_bool(
+            raw.get("synthetic_fixture", False), "data.synthetic_fixture"
+        ),
+        toxic_policy=toxic_policy,
+        **identifiers,
+        **policies,
     )
 
 
 def _parse_tfidf_logreg(raw: Any) -> TfidfLogRegConfig:
     raw = _ensure_mapping(raw, "models.tfidf_logreg")
+    _reject_unknown(raw, {item.name for item in fields(TfidfLogRegConfig)}, "models.tfidf_logreg")
     defaults = TfidfLogRegConfig()
     analyzer = raw.get("analyzer", defaults.analyzer)
     if not isinstance(analyzer, str) or analyzer not in _ALLOWED_ANALYZERS:
-        raise ConfigError(
-            f"models.tfidf_logreg.analyzer must be one of {_ALLOWED_ANALYZERS}, got {analyzer!r}"
-        )
+        raise ConfigError(f"models.tfidf_logreg.analyzer must be one of {_ALLOWED_ANALYZERS}")
     ngram_raw = raw.get("ngram_range", defaults.ngram_range)
     if (
         not isinstance(ngram_raw, (list, tuple))
@@ -190,6 +269,7 @@ def _parse_tfidf_logreg(raw: Any) -> TfidfLogRegConfig:
 
 def _parse_output(raw: Any) -> OutputConfig:
     raw = _ensure_mapping(raw, "output")
+    _reject_unknown(raw, {item.name for item in fields(OutputConfig)}, "output")
     return OutputConfig(
         model_dir=_parse_str(raw.get("model_dir", OutputConfig.model_dir), "output.model_dir"),
         reports_dir=_parse_str(
@@ -210,11 +290,13 @@ def load_config(path: str | Path) -> AppConfig:
     if not config_path.exists():
         raise ConfigError(f"Configuration file not found: {config_path}")
     try:
-        loaded = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        loaded = yaml.load(config_path.read_text(encoding="utf-8"), Loader=_ConfigLoader)
     except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
-        raise ConfigError(f"Invalid YAML in {config_path}: {exc}") from exc
+        raise ConfigError("Invalid YAML or unreadable configuration") from exc
     raw = _ensure_mapping(loaded, "Configuration root")
+    _reject_unknown(raw, {"data", "models", "output"}, "root")
     models_raw = _ensure_mapping(raw.get("models"), "models")
+    _reject_unknown(models_raw, {"tfidf_logreg"}, "models")
     return AppConfig(
         data=_parse_data(raw.get("data")),
         tfidf_logreg=_parse_tfidf_logreg(models_raw.get("tfidf_logreg")),

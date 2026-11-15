@@ -2,30 +2,32 @@
 
 ## Split discipline
 
-1. **Train** (official UIT-VSFC train file): used for fitting models and for
-   learning the TF-IDF vocabulary.
-2. **Validation** (official dev file): used exclusively for hyperparameter
-   selection and error analysis. Never used for fitting.
-3. **Test** (official test file): accessed only by `vfi evaluate`. Before
+1. **Train** is used for fitting models and learning the TF-IDF vocabulary.
+2. **Validation** is used for hyperparameter selection and error analysis.
+3. **Test** is a separate holdout accessed only by `vfi evaluate`. Before
    training, `--preflight-only` checks integrity without scoring a model or
-   reporting test label distributions. Score test only after finalizing model
+   reporting the canonical test label distribution. For NEU-ESC it does
+   record Toxic policy counts. Score test only after finalizing model
    selection. Keep test out of fitting, tuning, and error-driven iteration.
 
 With `data.use_official_splits: false`, the commands consistently derive a
-stratified validation subset from the raw train split using `validation_size`
-and `seed`. No official validation files are required in this mode. Fingerprints
-and split sizes describe the effective train and validation subsets. The test
-file remains the official test split.
+stratified validation subset from the physical train file using
+`validation_size` and `seed`. Identical normalized texts stay together.
+Fingerprints and sizes describe the effective subsets. With no separate test
+file, you can train and select on validation, but preflight and final test
+scoring fail until a holdout is available.
 
 `prepare-data` summarizes the effective train and validation data. `train`
 independently rejects cross-split matches between those subsets before fitting.
 `evaluate --preflight-only` checks all three split pairs. Reports contain counts
 of distinct overlapping texts, counts per pair, and whole-split fingerprints.
-They contain no record text or per-record identifiers. Matches use the shared
-Unicode and whitespace normalization, so case differences and near duplicates
-can escape detection. Cross-split matches fail the check with exit code 1.
-Review those conflicts under the corpus protocol. VFI preserves every record
-and offers no bypass for a failed benchmark preflight.
+Exact matching uses Unicode and whitespace normalization. Cross-split matches
+and contradictory labels for the same normalized text fail with exit code 1.
+Review the conflicts under the dataset's annotation protocol. The optional
+`prepare-data --near-duplicates` command compares up to 500 train/validation
+records using character TF-IDF similarity. Its bounded candidate count is an
+audit signal and does not remove rows or block training. Review sources and
+collection groups separately when they could correlate across splits.
 
 ## Metrics
 
@@ -65,8 +67,13 @@ model".
 `training_report.json` and model sidecars fingerprint the ordered normalized
 text and label pairs used for fitting and selection. Sidecars also record the
 configuration, seed, Python and scikit-learn versions, training start time, and
-the artifact's SHA-256 checksum. Training reads only the effective train and
-validation files. It can run with test files unavailable.
+the artifact's SHA-256 checksum. Adapter provenance records dataset version,
+mapping, policy, and source and effective split fingerprints. CSV and
+UIT-VSFC bind source bytes. JSONL binds parsed records and annotation
+provenance. Evidence and
+policy explanations are stored as hashes in model and report metadata.
+Training reads only sources for fit and selection, including when test files
+are unavailable.
 
 To score a benchmark, `evaluate` requires a passing `evaluation_preflight.json`
 created before fitting. It checks the current configuration and split fingerprints
@@ -76,12 +83,17 @@ unchanged snapshot preserves the original receipt time. For a changed snapshot,
 run preflight and train again, and report the change as a separate benchmark.
 Evaluation JSON identifies the exact test fingerprint and the training and
 artifact provenance. Keep the preflight report alongside the run's artifacts.
+Preflight also binds source provenance such as a change to a reviewed JSONL
+record's annotation reference even when its text and label stay the same.
+Synthetic fixture evaluations are explicitly labeled and are software checks.
 
 Load only locally trained artifacts from directories you control. Deserializing
 Joblib can execute arbitrary code. A sidecar and checksum can detect malformed
 metadata or accidental changes. Anyone who supplies a model file can also forge
 its sidecar. Retrain legacy artifacts that lack a checksum or the required
-evaluation provenance.
+evaluation provenance. Audited PR #1 models with a valid checksum remain
+loadable for local prediction and must be retrained for the integrated benchmark.
+Use separate model and report directories for concurrent or independent runs.
 
 Commands:
 
@@ -93,7 +105,7 @@ vfi evaluate --preflight-only --config configs/baseline.yaml
 # 2. Train both baselines; select on validation; save artifacts + report
 vfi train --config configs/baseline.yaml
 
-# 3. Evaluate a saved artifact on the official test split
+# 3. Evaluate a saved artifact on the declared test split
 vfi evaluate --model-id tfidf-logreg --config configs/baseline.yaml
 vfi evaluate --model-id majority --config configs/baseline.yaml
 ```

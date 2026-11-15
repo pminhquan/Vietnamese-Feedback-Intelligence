@@ -4,8 +4,9 @@ Subcommands
 -----------
 ``vfi prepare-data``  validate raw files, report duplicates/leakage/distribution.
 ``vfi train``         train baselines on train, select on validation, save artifacts.
-``vfi evaluate``      evaluate a saved artifact on the official test split.
+``vfi evaluate``      verify split integrity or score on the declared holdout.
 ``vfi predict``       single-text prediction from a locally trained artifact.
+``vfi dataset``       build and review an independent local dataset.
 
 Exit codes: 0 success; 1 runtime error (missing data/model); 2 usage error.
 """
@@ -22,21 +23,19 @@ from typing import Any
 
 from vfi import __version__
 from vfi.config import AppConfig, ConfigError, config_hash, load_config
+from vfi.custom_dataset import add_dataset_parser
+from vfi.data.adapters import AdapterResult, load_dataset_for_config
 from vfi.data.loading import (
     CANONICAL_LABELS,
     DataLoadingError,
     Record,
-    load_dataset,
     normalize_text,
 )
-from vfi.data.splitting import stratified_split
 from vfi.data.validation import (
+    NEAR_DUPLICATE_MAX_RECORDS,
     DataValidationError,
     class_distribution,
-    find_duplicates,
-    find_leakage,
-    fingerprint,
-    leakage_summary,
+    near_duplicate_candidates,
     validate_records,
 )
 from vfi.evaluation.metrics import compute_metrics, measure_latency
@@ -52,6 +51,7 @@ from vfi.models.baseline import (
 DEFAULT_CONFIG_PATH = "configs/baseline.yaml"
 DEFAULT_MODEL_DIR = "models"
 PREFLIGHT_REPORT = "evaluation_preflight.json"
+REPORT_SCHEMA = 2
 
 
 def _print_json(payload: Any) -> None:
@@ -63,32 +63,11 @@ def _fail(message: str, code: int) -> int:
     return code
 
 
-def _load_data(config: AppConfig, *, include_test: bool = False) -> dict[str, list[Record]]:
-    """Load effective splits; training never opens the official test files."""
-    splits = ("train", "validation") if config.data.use_official_splits else ("train",)
-    if include_test:
-        splits += ("test",)
-    data = load_dataset(config.data.raw_dir, splits=splits)
-    train, validation = _resolve_train_validation(data, config)
-    effective = {"train": train, "validation": validation}
-    if include_test:
-        effective["test"] = data["test"]
-    for name, records in effective.items():
-        if not records:
-            raise DataValidationError(f"Split {name!r} must not be empty")
+def _validate_benchmark_labels(config: AppConfig, data: dict[str, list[Record]]) -> None:
+    if config.data.toxic_policy == "keep":
+        raise DataValidationError("Toxic keep mode is for prepare-data audits only")
+    for records in data.values():
         validate_records(records)
-    return effective
-
-
-def _resolve_train_validation(
-    data: dict[str, list[Record]], config: AppConfig
-) -> tuple[list[Record], list[Record]]:
-    """Apply the documented split policy (official splits by default)."""
-    if config.data.use_official_splits:
-        return data["train"], data["validation"]
-    return stratified_split(
-        data["train"], validation_size=config.data.validation_size, seed=config.data.seed
-    )
 
 
 def cmd_prepare_data(args: argparse.Namespace) -> int:
@@ -97,30 +76,52 @@ def cmd_prepare_data(args: argparse.Namespace) -> int:
     except ConfigError as exc:
         return _fail(str(exc), 2)
     try:
-        data = _load_data(config)
-    except (DataLoadingError, DataValidationError, ValueError) as exc:
+        dataset = load_dataset_for_config(config.data)
+        return _write_data_report(
+            config, dataset, "data_report.json", near_duplicates=args.near_duplicates
+        )
+    except (DataLoadingError, DataValidationError, OSError, ValueError) as exc:
         return _fail(str(exc), 1)
-    return _write_data_report(config, data, "data_report.json")
 
 
-def _write_data_report(config: AppConfig, data: dict[str, list[Record]], filename: str) -> int:
-    fingerprints = {split: fingerprint(records) for split, records in data.items()}
+def _write_data_report(
+    config: AppConfig, dataset: AdapterResult, filename: str, *, near_duplicates: bool = False
+) -> int:
+    data = dataset.records_by_split
+    integrity = dataset.provenance["integrity"]
+    fingerprints = _fingerprints(dataset)
     report: dict[str, Any] = {}
     for split, records in data.items():
         report[split] = {
             "n_records": len(records),
-            "duplicate_texts": len(find_duplicates(records)),
+            "duplicate_texts": integrity["duplicates_by_split"][split]["count"],
             "fingerprint": fingerprints[split],
         }
         if split != "test":
             report[split]["class_distribution"] = class_distribution(records)
-    report["schema_version"] = 1
+            if config.data.toxic_policy == "keep":
+                report[split]["class_distribution"]["toxic"] = sum(
+                    record.label == "toxic" for record in records
+                )
+    report["schema_version"] = REPORT_SCHEMA
     report["config_hash"] = config_hash(config)
     report["dataset_fingerprints"] = fingerprints
-    report["leakage"] = leakage_summary(*data.items())
-    report["passed"] = report["leakage"]["cross_split_duplicate_texts"] == 0
+    report["dataset_provenance"] = _dataset_provenance(dataset)
+    report["leakage"] = integrity["leakage"]
+    report["contradictions"] = integrity["contradictions"]
+    report["passed"] = (
+        report["leakage"]["cross_split_duplicate_texts"] == 0
+        and report["contradictions"]["count"] == 0
+    )
+    if near_duplicates:
+        records_to_check = [record for records in data.values() for record in records]
+        report["near_duplicate_audit"] = {
+            "records_checked": min(len(records_to_check), NEAR_DUPLICATE_MAX_RECORDS),
+            "total_records": len(records_to_check),
+            "candidate_count_capped_at_50": len(near_duplicate_candidates(records_to_check)),
+        }
     report["created_at"] = datetime.now(UTC).isoformat()
-    report["note"] = "Exact-match conflicts after shared normalization. All records are preserved."
+    report["note"] = "Exact-match conflicts after shared normalization within the effective data."
     reports_dir = Path(config.output.reports_dir)
     reports_dir.mkdir(parents=True, exist_ok=True)
     report_path = reports_dir / filename
@@ -133,6 +134,7 @@ def _write_data_report(config: AppConfig, data: dict[str, list[Record]], filenam
                 and previous.get("schema_version") == report["schema_version"]
                 and previous.get("config_hash") == report["config_hash"]
                 and previous.get("dataset_fingerprints") == report["dataset_fingerprints"]
+                and previous.get("dataset_provenance") == report["dataset_provenance"]
                 and previous.get("passed") is True
                 and report["passed"]
             ):
@@ -145,8 +147,28 @@ def _write_data_report(config: AppConfig, data: dict[str, list[Record]], filenam
     report["report_path"] = str(report_path)
     _print_json(report)
     if not report["passed"]:
-        return _fail("Cross-split duplicates found; review split integrity.", 1)
+        return _fail(
+            "Cross-split duplicates or contradictory labels found. Review split integrity.", 1
+        )
     return 0
+
+
+def _dataset_provenance(dataset: AdapterResult, *, training_only: bool = False) -> dict[str, Any]:
+    return {
+        "identity": dataset.provenance["identity"],
+        "split_provenance": {
+            split: details
+            for split, details in dataset.provenance["split_provenance"].items()
+            if not training_only or split in ("train", "validation")
+        },
+    }
+
+
+def _fingerprints(dataset: AdapterResult) -> dict[str, str]:
+    return {
+        split: details["fingerprint"]
+        for split, details in dataset.provenance["split_provenance"].items()
+    }
 
 
 def cmd_train(args: argparse.Namespace) -> int:
@@ -155,21 +177,27 @@ def cmd_train(args: argparse.Namespace) -> int:
     except ConfigError as exc:
         return _fail(str(exc), 2)
     try:
-        data = _load_data(config)
-    except (DataLoadingError, DataValidationError, ValueError) as exc:
+        dataset = load_dataset_for_config(config.data)
+        data = dataset.records_by_split
+        _validate_benchmark_labels(config, data)
+    except (DataLoadingError, DataValidationError, OSError, ValueError) as exc:
         return _fail(str(exc), 1)
 
     train_records, validation_records = data["train"], data["validation"]
-    conflicts = find_leakage(("train", train_records), ("validation", validation_records))
+    integrity = dataset.provenance["integrity"]
+    conflicts = integrity["leakage"]["cross_split_duplicate_texts"]
     if conflicts:
         return _fail(
-            f"Train/validation leakage: {len(conflicts)} duplicate texts; "
+            f"Train/validation leakage: {conflicts} duplicate texts. "
             "review the split protocol. No records were removed and no model was fitted.",
             1,
         )
+    if integrity["contradictions"]["count"]:
+        return _fail("Training data contains contradictory labels for identical text", 1)
     if {record.label for record in train_records} != set(CANONICAL_LABELS):
         return _fail("Training requires all canonical classes: negative, neutral, positive", 1)
-    fingerprints = {split: fingerprint(records) for split, records in data.items()}
+    fingerprints = _fingerprints(dataset)
+    dataset_provenance = _dataset_provenance(dataset)
 
     training_started_at = datetime.now(UTC).isoformat()
     started = time.perf_counter()
@@ -209,6 +237,7 @@ def cmd_train(args: argparse.Namespace) -> int:
         extra={
             "model_id": MODEL_IDS["majority"],
             "training_started_at": training_started_at,
+            "dataset_provenance": dataset_provenance,
             "fit_seconds": majority_fit_seconds,
             "validation_metrics": val_report["majority"],
             "majority_label": majority.majority_label,
@@ -222,6 +251,7 @@ def cmd_train(args: argparse.Namespace) -> int:
         extra={
             "model_id": MODEL_IDS["tfidf-logreg"],
             "training_started_at": training_started_at,
+            "dataset_provenance": dataset_provenance,
             "validation_metrics": val_report["tfidf_logreg_selected"],
             "search_trials": val_report["search_trials"],
             "selection_metric": "val_macro_f1",
@@ -232,12 +262,16 @@ def cmd_train(args: argparse.Namespace) -> int:
     reports_dir = Path(config.output.reports_dir)
     reports_dir.mkdir(parents=True, exist_ok=True)
     training_report = {
+        "result_scope": (
+            "synthetic_fixture" if config.data.synthetic_fixture else "train_validation"
+        ),
         "training_started_at": training_started_at,
         "split_sizes": {
             "train": len(train_records),
             "validation": len(validation_records),
         },
         "dataset_fingerprints": fingerprints,
+        "dataset_provenance": dataset_provenance,
         "train_class_distribution": class_distribution(train_records),
         "validation_report": val_report,
         "total_train_seconds": time.perf_counter() - started,
@@ -256,20 +290,22 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
         return _fail(str(exc), 2)
     if args.preflight_only:
         try:
-            data = _load_data(config, include_test=True)
-        except (DataLoadingError, DataValidationError, ValueError) as exc:
+            dataset = load_dataset_for_config(config.data, include_test=True)
+            _validate_benchmark_labels(config, dataset.records_by_split)
+            return _write_data_report(config, dataset, PREFLIGHT_REPORT)
+        except (DataLoadingError, DataValidationError, OSError, ValueError) as exc:
             return _fail(str(exc), 1)
-        return _write_data_report(config, data, PREFLIGHT_REPORT)
     if args.model_id not in MODEL_IDS:
         return _fail(f"--model-id must be one of {sorted(MODEL_IDS)}", 2)
     try:
         model, metadata = load_model(config.output.model_dir, MODEL_IDS[args.model_id])
-        data = _load_data(config, include_test=True)
-        preflight = _verify_evaluation_provenance(config, metadata, data)
-    except (FileNotFoundError, DataLoadingError, DataValidationError, ValueError) as exc:
+        dataset = load_dataset_for_config(config.data, include_test=True)
+        _validate_benchmark_labels(config, dataset.records_by_split)
+        preflight = _verify_evaluation_provenance(config, metadata, dataset)
+    except (OSError, DataLoadingError, DataValidationError, ValueError) as exc:
         return _fail(str(exc), 1)
 
-    test_records = data["test"]
+    test_records = dataset.records_by_split["test"]
     texts = [record.text for record in test_records]
     labels = [record.label for record in test_records]
     metrics = compute_metrics(labels, model.predict(texts))
@@ -279,6 +315,10 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
         "created_at": metadata.get("created_at"),
         "config_hash": metadata.get("config_hash"),
         "dataset_fingerprint_test": preflight["dataset_fingerprints"]["test"],
+        "dataset_provenance": _dataset_provenance(dataset),
+        "result_scope": "synthetic_fixture"
+        if config.data.synthetic_fixture
+        else "declared_holdout",
         "training_provenance": {
             key: metadata[key]
             for key in (
@@ -286,6 +326,7 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
                 "training_started_at",
                 "config_hash",
                 "dataset_fingerprints",
+                "dataset_provenance",
                 "artifact_sha256",
                 "seed",
                 "python_version",
@@ -306,7 +347,7 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
 
 
 def _verify_evaluation_provenance(
-    config: AppConfig, metadata: dict[str, Any], data: dict[str, list[Record]]
+    config: AppConfig, metadata: dict[str, Any], dataset: AdapterResult
 ) -> dict[str, Any]:
     """Bind benchmark data to a clean preflight that predates this model.
 
@@ -319,18 +360,22 @@ def _verify_evaluation_provenance(
         preflight = json.loads(path.read_text(encoding="utf-8"))
         if (
             not isinstance(preflight, dict)
-            or preflight.get("schema_version") != 1
+            or preflight.get("schema_version") != REPORT_SCHEMA
             or preflight.get("passed") is not True
             or preflight.get("config_hash") != config_hash(config)
             or metadata.get("config_hash") != config_hash(config)
         ):
             raise ValueError("Missing, failed or incompatible preflight/configuration")
-        current = {split: fingerprint(records) for split, records in data.items()}
+        current = _fingerprints(dataset)
         training = {split: current[split] for split in ("train", "validation")}
         if metadata.get("dataset_fingerprints") != training:
             raise ValueError("Training/validation dataset differs from saved model provenance")
         if preflight.get("dataset_fingerprints") != current:
             raise ValueError("Dataset differs from the preflight snapshot")
+        if metadata.get("dataset_provenance") != _dataset_provenance(dataset, training_only=True):
+            raise ValueError("Fit or selection adapter provenance differs from the saved model")
+        if preflight.get("dataset_provenance") != _dataset_provenance(dataset):
+            raise ValueError("Adapter provenance differs from the preflight snapshot")
         checked_at = datetime.fromisoformat(preflight["created_at"])
         trained_at = datetime.fromisoformat(metadata["training_started_at"])
         if checked_at.tzinfo is None or trained_at.tzinfo is None or checked_at > trained_at:
@@ -393,6 +438,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     prepare = subparsers.add_parser("prepare-data", help="Validate and summarize train/validation")
     prepare.add_argument("--config", default=DEFAULT_CONFIG_PATH)
+    prepare.add_argument(
+        "--near-duplicates", action="store_true", help="Audit a bounded sample for similar texts"
+    )
     prepare.set_defaults(func=cmd_prepare_data)
 
     train = subparsers.add_parser("train", help="Train baselines (train/validation splits only)")
@@ -415,6 +463,7 @@ def build_parser() -> argparse.ArgumentParser:
     predict.add_argument("--model-id", default="tfidf-logreg", choices=sorted(MODEL_IDS))
     predict.add_argument("--model-dir", default=None, help="Directory holding trained artifacts")
     predict.set_defaults(func=cmd_predict)
+    add_dataset_parser(subparsers)
     return parser
 
 
