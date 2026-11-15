@@ -15,6 +15,10 @@ from vfi.cli import main
 from vfi.config import AppConfig, ConfigError, config_hash, load_config
 from vfi.models.baseline import MODEL_IDS, MajorityBaseline, build_training_metadata, save_model
 
+NEU_ESC_EXPERIMENT = (
+    Path(__file__).resolve().parents[1] / "configs/experiments/neu-esc-first-baselines.yaml"
+)
+
 
 def write_config(tmp_path: Path, adapter: str, **overrides) -> Path:
     config = {
@@ -57,6 +61,65 @@ def write_csv(tmp_path: Path, adapter: str, *, with_test: bool = True) -> None:
             for record in make_records(5, split=split, offset=100 * index):
                 label = mapping[record.label] if adapter == "five_level_csv" else record.label
                 writer.writerow([record.text, label])
+
+
+def test_neu_experiment_template_requires_authorization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = load_config(NEU_ESC_EXPERIMENT)
+    assert config.data.dataset_adapter == "neu_esc"
+    assert config.data.synthetic_fixture is False
+    assert config.data.rights_confirmed is False
+    assert config.data.use_official_splits is True
+    assert config.data.toxic_policy == "exclude"
+    assert run(NEU_ESC_EXPERIMENT, "evaluate", "--preflight-only") == 1
+    assert "Confirm the dataset's permitted use" in capsys.readouterr().err
+    assert not Path(config.output.reports_dir).exists()
+    assert not Path(config.output.model_dir).exists()
+
+
+def test_neu_experiment_configuration_smoke_uses_synthetic_validation_only(
+    tmp_path: Path,
+) -> None:
+    payload = yaml.safe_load(NEU_ESC_EXPERIMENT.read_text(encoding="utf-8"))
+    payload["data"].update(
+        raw_dir=str(tmp_path / "splits"),
+        dataset_id="synthetic_neu_esc_contract",
+        dataset_version="fixture-v1",
+        synthetic_fixture=True,
+    )
+    payload["output"] = {
+        "model_dir": str(tmp_path / "models"),
+        "reports_dir": str(tmp_path / "reports"),
+    }
+    config = tmp_path / "synthetic.yaml"
+    config.write_text(yaml.safe_dump(payload), encoding="utf-8")
+    write_csv(tmp_path, "neu_esc")
+    for split in ("train", "validation", "test"):
+        split_file = tmp_path / "splits" / f"{split}.csv"
+        with split_file.open("a", encoding="utf-8", newline="") as handle:
+            csv.writer(handle).writerow([f"Synthetic exclusion in {split}", "Toxic"])
+
+    assert run(config, "prepare-data") == 0
+    assert run(config, "evaluate", "--preflight-only") == 0
+    preflight = read_report(tmp_path, "evaluation_preflight.json")
+    assert preflight["passed"] is True
+    assert preflight["dataset_provenance"]["identity"]["synthetic_fixture"] is True
+    splits = preflight["dataset_provenance"]["split_provenance"]
+    assert {split: details["toxic_excluded"] for split, details in splits.items()} == {
+        "train": 1,
+        "validation": 1,
+        "test": 1,
+    }
+    assert run(config, "train") == 0
+    training = read_report(tmp_path, "training_report.json")
+    assert training["result_scope"] == "synthetic_fixture"
+    assert training["dataset_fingerprints"] == {
+        split: preflight["dataset_fingerprints"][split] for split in ("train", "validation")
+    }
+    assert {"majority", "tfidf_logreg_selected"} <= training["validation_report"].keys()
+    assert not list((tmp_path / "reports").glob("eval_*.json"))
 
 
 @pytest.mark.parametrize("adapter", ["five_level_csv", "neu_esc"])
