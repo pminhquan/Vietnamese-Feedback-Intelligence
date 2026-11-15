@@ -7,8 +7,8 @@
 >
 > Nguyên tắc số 0 — **không phát minh thành tích:** mọi điều nói về dự án
 > phải trỏ được đến một artifact thật (file, commit, JSON). Hiện dự án chưa
-> có kết quả thí nghiệm trên dữ liệu thật (dataset UIT-VSFC chờ ký thỏa
-> thuận — `docs/dataset-uit-vsfc.md`), nên phần "đã có" và phần "cần sản
+> có kết quả thí nghiệm trên dữ liệu thật. Benchmark cần nguồn được phép
+> dùng và holdout hợp lệ, nên phần "đã có" và phần "cần sản
 > xuất" được tách rời rõ ràng bên dưới. Điền mục nào xong mục đó; không điền
 > trước.
 

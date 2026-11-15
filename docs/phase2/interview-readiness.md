@@ -6,7 +6,7 @@
 >
 > Trạng thái trung thực cần nhớ khi phỏng vấn: dự án **đã có** pipeline
 > classical ML hoàn chỉnh, test, CI, protocol — nhưng **chưa có số liệu thật**
-> (dataset UIT-VSFC chờ ký thỏa thuận). Tuyên bố đúng trạng thái này là điểm
+> (chưa chạy benchmark trên nguồn được phép sử dụng). Tuyên bố đúng trạng thái này là điểm
 > cộng về trung thực, không phải điểm trừ. Đừng nói "đã train được model X%"
 > khi chưa có.
 >
@@ -20,16 +20,17 @@
 
 ### Q1. "Kể toàn bộ pipeline của dự án từ dữ liệu đến dự đoán."
 
-**Câu trả lời tốt cần bao phủ:** dữ liệu UIT-VSFC (feedback sinh viên, 3
-lớp positive/neutral/negative) được tải bằng `vfi/data/loading.py` — chuẩn
-hóa NFC + gộp khoảng trắng (không lowercase, không bỏ dấu vì mất tín hiệu
+**Câu trả lời tốt cần bao phủ:** adapter đọc dữ liệu cục bộ được phép dùng
+và ánh xạ sang ba lớp positive/neutral/negative. Văn bản được chuẩn
+hóa NFC + gộp khoảng trắng (không bỏ dấu vì mất tín hiệu
 tiếng Việt); kiểm tra trùng lặp và rò rỉ chéo split trong
 `vfi/data/validation.py` (`find_leakage`); `vfi/data/splitting.py` cho fallback
 split phân tầng có seed; model: `MajorityBaseline` và `Pipeline` TF-IDF →
 LogisticRegression (`models/baseline.py`), chọn siêu tham số trên validation
 (`run_small_search`, 4 ứng viên); metric macro-F1 (`evaluation/metrics.py`);
-artifact: `model.joblib` + `meta.json` (provenance); CLI 4 lệnh:
-`prepare-data | train | evaluate | predict`.
+artifact: `model.joblib` + `meta.json` có provenance và checksum. CLI có
+`dataset` để duyệt dữ liệu tự thu thập và `evaluate --preflight-only` để
+kiểm tra split trước khi fit.
 
 **Câu trả lời sai phổ biến:** kể kiểu "có AI giúp tôi code" hoặc chỉ nói
 "TF-IDF rồi logistic regression" mà không nhắc split discipline và artifact
@@ -76,17 +77,12 @@ câu trả lời của người chưa xử lý dữ liệu tiếng Việt thật
 
 ### Q5. "Nhãn của dataset gốc là số nguyên — bạn xử lý mapping như thế nào?"
 
-**Câu trả lời tốt cần bao phủ:** loader Phase 1 đang hard-code mapping
-`0=positive, 1=negative, 2=neutral` (theo khai báo `ClassLabel` của loader
-SEACrowd) — nguồn này **chưa được xác minh** và mâu thuẫn với card của chính
-nhóm tác giả; cân bằng chứng nghiêng về `0=negative` làm *planning prior*,
-nhưng trạng thái là **UNRESOLVED** và gate G2 quyết định (xem
-`label-semantics-evidence.md`). VFI chuyển ngay khi tải sang không gian
-canonical một chỗ duy nhất: `negative=0, neutral=1, positive=2`
-(`CANONICAL_LABELS`, `RAW_SENTIMENT_TO_LABEL` trong `vfi/data/loading.py`)
-— toàn bộ code sau đó không phải biết mapping gốc. Và điểm cộng lớn: khi có
-dữ liệu thật, **kiểm tra tay vài dòng với README của tác giả** trước khi tin
-mapping — đây là caveat đã ghi trong `docs/dataset-uit-vsfc.md`.
+**Câu trả lời tốt cần bao phủ:** xác minh ý nghĩa nhãn theo nguồn đã chọn.
+Adapter ghi mapping vào provenance. Downstream dùng thống nhất
+`negative=0, neutral=1, positive=2`. Với UIT-VSFC, thứ tự nhãn số do
+SEACrowd và nhóm tác giả công bố mâu thuẫn, nên adapter tùy chọn cần bằng
+chứng cho chính bản dữ liệu được phép dùng. Xem
+[hồ sơ xung đột nhãn](label-semantics-evidence.md).
 
 **Câu trả lời sai phổ biến:** "Có mapping sẵn trong code" — không nhớ chiều
 mapping gốc, không biết điểm rủi ro là một nhãn lệch 1 bước làm toàn bộ kết
@@ -367,9 +363,8 @@ minh bằng `git log` trước khi kể):**
    nguồn công khai thực ra mâu thuẫn nhau, còn UNRESOLVED (xem
    `label-semantics-evidence.md`); được xử lý bằng remap một chỗ có tài
    liệu + caveát "kiểm tra tay vài dòng với README tác giả trước khi tin".
-3. **Blocker dataset:** không thể tự ý tải UIT-VSFC vì license phải ký thỏa
-   thuận — cách xử lý là ghi verdict BLOCKED có bằng chứng nguồn, làm hết
-   code trên synthetic fixtures, không bịa số.
+3. **Quyền sử dụng dữ liệu:** UIT-VSFC có điều kiện riêng. Dự án thêm adapter
+   cho dữ liệu hợp lệ khác và quy trình duyệt dữ liệu tự thu thập.
 
 Nếu kể chuyện nào, bạn phải tự đọc lại nguồn thật (commit, doc) trước —
 kể sai chi tiết của chính dự án mình còn tệ hơn không có chuyện để kể.
@@ -387,8 +382,8 @@ kể sai chi tiết của chính dự án mình còn tệ hơn không có chuy�
    lộn xộn + hỏi sâu "vì sao" 2 tầng ("vì sao dùng macro-F1?" → "vì sao lớp
    hiếm phải ngang lớp lớn?").
 4. **Câu trả lời khi chưa có số liệu thật:** mẫu chuẩn — "Pipeline và protocol
-   đã xong và có test; chưa có kết quả thật vì dataset chờ thỏa thuận license;
-   khi có data, quy trình của tôi là X." Trung thực + cho thấy đã sẵn sàng.
+   đã có test. Kết quả thật cần nguồn được phép dùng, nhãn đã xác minh
+   và holdout qua preflight." Sau đó giải thích cách bạn sẽ chạy baseline.
 
 **Lời cam kết cuối:** không dùng AI để soạn đáp án khi luyện; AI chỉ được
 hỏi ngược bạn (đóng vai interviewer). Đáp án phỏng vấn phải sống trong đầu

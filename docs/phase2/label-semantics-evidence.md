@@ -9,19 +9,18 @@ Companion documents:
 - Recommendation and owner actions: [dataset-acquisition-plan.md](dataset-acquisition-plan.md)
 - License/access comparison: [dataset-license-matrix.md](dataset-license-matrix.md)
 - Per-candidate deep dives: [dataset-landscape.md](dataset-landscape.md)
-- The audit procedure this evidence feeds into: [experiment-blueprint.md](experiment-blueprint.md) §3
+- The historical audit procedure: [experiment-blueprint.md](experiment-blueprint.md)
 
 ## Verdict (read this first)
 
 **The raw integer encoding of the author-distributed `{split}/sentiments.txt` files remains
-UNRESOLVED.** No artifact fetched today — the author's GitHub README, the KSE 2018 paper, or
-either Hugging Face loader — documents it explicitly. What this pass established beyond the
-morning findings:
+unresolved.** The 2026-11-07 review did not find documentation confirming the encoding
+of the original files. It established the following facts about the mirror declarations:
 
 1. **The two loader scripts consume the identical raw files.** All nine Google Drive file IDs
    in their `_URLS` blocks match character-for-character, and both pass raw integers through
-   unmodified (`int(sentiment.strip())`). Their `ClassLabel` declarations are contradictory —
-   so exactly one of the two mirrors mislabels every row.
+   unmodified (`int(sentiment.strip())`). Their `ClassLabel` declarations cannot both
+   describe the same original integer encoding.
 2. **The authors' own HF org is internally consistent across three independent artifacts**
    (card "Data Fields" prose, the datasets-library loader script embedded in their repo, and
    the parquet features their upload serves): all three say 0=negative, 1=neutral, 2=positive.
@@ -29,11 +28,10 @@ morning findings:
    *both* label spaces (sentiment and topic) relative to the datasets-library script, and the
    PR/issue trail contains no label-verification discussion whatsoever.
 
-The evidential balance therefore favors **0 = negative** (the authors' own layer) as a
-*planning prior*, but the chain of inference from card prose to raw files is not documented by
-the authors, so the decision gate is unchanged: **author confirmation + blind audit of the
-delivered files before anything trains** (G2 in `00-executive-decision.md`). Neither mirror is
-trusted for training in the interim.
+The author's own Hugging Face declaration is the better-supported hypothesis, but it
+does not establish the original integer encoding. The owner will not contact the authors
+or sign the corpus agreement. The optional adapter stays inactive. Independent datasets
+have their own label policies and do not depend on resolving this conflict.
 
 ## Evidence legend
 
@@ -221,8 +219,8 @@ Applying this to the two mirrors:
 3. **Therefore the two declarations cannot both be correct.** Given identical inputs and
    identity int handling, if the raw files encode 0=negative then SEACrowd's loader permutes
    every row (0→"positive", 1→"negative", 2→"neutral"); if the raw files encode 0=positive
-   then the authors' own card, script, and served data are all wrong in the same way. Exactly
-   one mirror mislabels systematically. **[VERIFIED FACT as a logical consequence of 1+2;
+   then the authors' own card, script, and served data disagree with the raw order.
+   **[VERIFIED FACT as a logical consequence of 1+2;
    the raw truth itself is UNRESOLVED]**
 4. **One caveat:** both scripts were written years apart (datasets-library script ~2020-2022;
    SEACrowd merged 2024-01-16) against a Drive folder neither of us can inspect without
@@ -230,12 +228,12 @@ Applying this to the two mirrors:
    at the time". Nothing in either card notes a data change. **[ASSUMPTION that the raw files
    are unchanged]**
 
-**What would count as authoritative evidence for layer (c)** — none of it exists publicly
-today:
+**Evidence for layer (c)** remained unavailable in the 2026-11-07 review. A future
+verification could use:
 
 - an author statement mapping integers to sentiments for the distributed files;
 - documentation shipped inside the corpus package (README/agreement material);
-- a blind audit of the delivered files ([experiment-blueprint.md](experiment-blueprint.md) §3).
+- a blind audit of the authorized training files.
 
 ---
 
@@ -248,11 +246,10 @@ today:
 | **(b) Authors' own HF upload** | `uitnlp` card prose + embedded datasets-library script + served parquet features | 0=negative, 1=neutral, 2=positive | Three mutually consistent artifacts under the authors' own org. Still a loader-derived reading, not explicit author documentation of the raw files. **[VERIFIED FACT as their declaration; best available proxy]** |
 | **(c) Original corpus raw encoding** (`{split}/sentiments.txt` as distributed) | — none fetched — | **UNKNOWN** | Documented nowhere: not in the author README, not in the open paper record, not in either loader. **UNRESOLVED** |
 
-Phase 1's loader hard-codes `RAW_SENTIMENT_TO_LABEL = {0: "positive", 1: "negative",
-2: "neutral"}` — a layer-(b)-SEACrowd inference, already flagged
-[UNVERIFIED AGAINST AUTHOR SOURCE] in `00-executive-decision.md`. Layer (a) is unaffected by
-this conflict: whatever the raw files say, VFI's canonical space is fixed by definition, and
-the raw-to-canonical mapping is exactly what G2 must pin down.
+The original Phase 1 implementation used the SEACrowd interpretation as its default.
+The integrated experiment workflow requires an explicit mapping and evidence tied to the
+authorized UIT-VSFC files. VFI's internal canonical labels stay fixed. See the
+[optional adapter requirements](../dataset-uit-vsfc.md#requirements-for-optional-uit-vsfc-use).
 
 ---
 
@@ -265,17 +262,14 @@ the raw-to-canonical mapping is exactly what G2 must pin down.
   corpora. (ii) Consistency: the authors' layer is coherent across three independent artifacts
   (prose, script, served data); SEACrowd's single script contradicts all three. (iii)
   Process: SEACrowd's own PR trail shows both label orders were changed relative to the
-  datasets-library script with no verification discussion; the authors' artifacts at least
-  claim the mapping in their own voice. If a planning decision had to be made today with no
-  author response, the rational prior is 0=negative, 1=neutral, 2=positive.
-- **Why the conclusion is still "resolve with the author + blind audit".** (i) Even the
+  datasets-library script with no verification discussion. This made the author-org
+  declaration the stronger hypothesis in the original review.
+- **Why independent verification would still be needed.** (i) Even the
   authors' card describes the HF *feature* encoding, not the raw `sentiments.txt` files as
   such; the chain "HF upload was generated by this script from the official raw files" is
-  [ASSUMPTION] — undocumented by the authors. (ii) The cost of settling it is one email answer
-  plus a 135-line audit, trivially cheap against the cost of silently inverting a label space
-  across a research project. (iii) **An inverted mapping is invisible in headline metrics**
-  (see below), so "it trained fine" would prove nothing — only documentation or the audit
-  catches it.
+  [ASSUMPTION] — undocumented by the authors. (ii) **An inverted mapping can survive
+  headline metric checks** (see below), so verification needs source evidence and
+  a label audit.
 
 **Blast-radius note (conditional reasoning, not a result).** If the raw encoding turns out to
 be 0=negative (H1 below) and Phase 1's SEACrowd-derived mapping were applied to the raw files,
@@ -289,49 +283,19 @@ explains why the gate exists.
 
 ## 7. Pre-registered audit hypotheses
 
-These plug into the audit procedure in [experiment-blueprint.md](experiment-blueprint.md) §3
-(manual audit, acceptance rule, distribution corroboration, audit trail):
+These hypotheses preserve the original research design for any future audit of authorized
+original files. Neither is an experiment default.
 
 - **H1 (expected):** raw `0`=negative, `1`=neutral, `2`=positive — the authors' own layer.
-  If the audit supports H1, Phase 1's `RAW_SENTIMENT_TO_LABEL` must be corrected to
-  `{0: "negative", 1: "neutral", 2: "positive"}` (mapped into the VFI canonical space) before
-  any real-data run, and the correction recorded in the audit report.
-- **H2 (alternative):** raw `0`=positive, `1`=negative, `2`=neutral — the SEACrowd layer. If
-  the audit supports H2, Phase 1's loader stands as-is and the `uitnlp` card/script/features
-  are recorded as the error.
-- The audit is decided by author documentation first (step 1 of the protocol), the blind
-  reader audit second (steps 2-3); a conflict between author answer and audit triggers
-  investigation, not silent acceptance of either.
+- **H2 (alternative):** raw `0`=positive, `1`=negative, `2`=neutral — the SEACrowd layer.
+- Compare release documentation with a blind reader audit of authorized training data.
+  Record which mapping the evidence supports and investigate disagreements before use.
 
-## 8. Draft question block for the author (owner sends — nobody on this program emails anyone)
+## 8. Evidence required for optional UIT-VSFC use
 
-Copy-paste into the UIT-VSFC request email (template in
-[dataset-acquisition-plan.md](dataset-acquisition-plan.md)), or send as a follow-up in the
-same thread:
-
-```text
-Three quick technical questions about the UIT-VSFC label files (the sentiments.txt file in
-each split folder), so we can configure our data loader exactly to your specification:
-
-1. In the distributed train/validation/test sentiment files, what is the exact integer-to-
-   sentiment mapping? Specifically, which integer (0, 1, or 2) denotes "negative", which
-   "neutral", and which "positive"?
-
-2. Two public Hugging Face sources appear to encode these labels differently, and we would
-   like to know which (if either) matches your raw files:
-   - The SEACrowd loader (SEACrowd/uit_vsfc) declares the class order
-     ["positive", "negative", "neutral"], which would mean 0=positive, 1=negative,
-     2=neutral.
-   - Your group's own dataset card (uitnlp/vietnamese_students_feedback) states the values
-     are "0 (negative), 1 (neutral) and 2 (positive)".
-   Are both of these correct interpretations of your raw sentiments.txt files, or is one of
-   them mislabeled?
-
-3. To confirm the access procedure: is signing the corpus user agreement (requested via
-   kietnv@uit.edu.vn) the required and sufficient step to obtain UIT-VSFC for non-commercial
-   research? And once the agreement is signed, may the data be obtained through your group's
-   Hugging Face upload (uitnlp/vietnamese_students_feedback), or is a separate delivery used?
-```
+Any future use requires a signed agreement, evidence that the delivery channel is
+authorized, and verification of the raw integer labels for that release. The project
+currently pursues an [independent dataset](dataset-acquisition-plan.md) instead.
 
 ## Sources (all fetched 2026-11-07)
 

@@ -1,20 +1,14 @@
 # Phase 2 Pilot Experiment Plan — Milestone M1
 
-Status: **design only**. Nothing here has been run; no dataset is available
-(G1 open), the label gate is unresolved (G2 open), the torch stack is not
-installed (G3/G4 open). Every runtime or VRAM figure is `[ESTIMATE]` with
-visible reasoning; no metric value exists anywhere in this document. This
-plan is the implementation-level contract for the smallest reproducible
-deep-learning pilot; the strategy-level view stays in
-[experiment-blueprint.md](experiment-blueprint.md) and the cost map in
-[experiment-matrix.md](experiment-matrix.md).
-
-Written 2026-11-07 (hardening pass) against Phase 1 commit
-`95f7687735c785367fa0a6f9b1efbf0e284aac7f`. Companion evidence:
-[compute-feasibility.md](compute-feasibility.md) (hardware `[MEASURED]`),
-[tokenization-design.md](tokenization-design.md) (preprocessing contract),
-[label-semantics-evidence.md](label-semantics-evidence.md) (label conflict —
-read-only for this plan).
+Status: **design only**. No model has been run for this pilot. Real runs
+need a selected authorized dataset, verified labels, a passing preflight,
+two real classical baseline artifacts with validation evidence, and
+approval for the deep-learning stack and compute. Runtime and VRAM figures
+are [ESTIMATE] planning scenarios. Strategy and cost details live in
+[experiment-blueprint.md](experiment-blueprint.md) and
+[experiment-matrix.md](experiment-matrix.md). For the historical hardware
+and preprocessing reasoning, see [compute-feasibility.md](compute-feasibility.md)
+and [tokenization-design.md](tokenization-design.md).
 
 Evidence labels: `[VERIFIED FACT]`, `[MEASURED]`, `[ESTIMATE]`,
 `[ASSUMPTION]`, `[UNVERIFIED]`, `[BLOCKED]`.
@@ -30,18 +24,18 @@ Evidence labels: `[VERIFIED FACT]`, `[MEASURED]`, `[ESTIMATE]`,
 3. **Single seed (42) for the pilot.** Multi-seed {42, 7, 2026} is the
    pre-declared M2 escalation path (§4), never a pilot fallback triggered
    by disliking a result.
-4. **Label-audit gate blocks everything.** No model — classical or deep —
-   consumes real data until the author answers + the blind audit settle the
-   raw 0/1/2 mapping (§2.4). Evidence currently favors the authors' own
-   layer (0=negative, 1=neutral, 2=positive) as a *planning prior only*
-   (H1 in [label-semantics-evidence.md](label-semantics-evidence.md) §7).
+4. **Approve and freeze one dataset before fitting.** Verify rights, mapping,
+   and a separate holdout. Pass the integrity preflight, then retain real
+   majority and TF-IDF+LogReg validation results with both artifacts
+   frozen before any PhoBERT fit (§2).
 5. **max_length 256** (PhoBERT's model maximum), right-side truncation,
    measured length distribution and truncation rate recorded (§3.4).
 6. **Effective batch 32 via micro-batch 8 × gradient accumulation 4**
    `[ESTIMATE]` — sized for the `[MEASURED]` 6 GB VRAM but not guaranteed
    before measurement; the OOM ladder (§7.2) is pre-declared, not improvised.
-7. **Selection on validation macro-F1 only; test touched exactly once** per
-   final configuration, after freezing, ledger-recorded (§6, §8).
+7. **Validation macro-F1 is the only selection metric.** Preflight reads the
+   test source for integrity. Final scoring runs once per frozen model, with
+   all fits locked before any score is released (§6, §8).
 8. **Same metric code as Phase 1** (`vfi.evaluation.metrics.compute_metrics`)
    and the same documented latency protocol (`measure_latency`), extended
    with device/precision metadata and segmentation time reported separately
@@ -60,13 +54,14 @@ Evidence labels: `[VERIFIED FACT]`, `[MEASURED]`, `[ESTIMATE]`,
 
 | ID | Model | Code origin | Input text | Trained in M1? |
 | -- | ----- | ----------- | ---------- | -------------- |
-| `majority` | Majority-class classifier, Phase 1 (`MajorityBaseline`, canonical-label tie-break) | Phase 1, reused unchanged | normalized raw text (labels only — text unused) | No (deterministic count) |
+| `majority` | Majority-class classifier, Phase 1 (`MajorityBaseline`, canonical-label tie-break) | Phase 1, reused unchanged | train labels | Yes, deterministic count |
 | `tfidf-logreg` | TF-IDF + Logistic Regression, Phase 1 4-candidate search on validation, select by validation macro-F1, ties to first candidate | Phase 1, reused unchanged (`run_small_search`) | normalized raw text, vectorizer-internal tokenization | Yes, minutes `[ESTIMATE]` |
 | `phobert-base-ft` | `vinai/phobert-base` (~135M params `[VERIFIED FACT]` card/config), full fine-tune, linear head on first token (`<s>`), dropout 0.1 `[ESTIMATE]` | New Phase 2 training loop (this plan) | NFC-normalized → word-segmented → BPE, max 256 | Yes, one fixed-recipe run, seed 42 |
 
-The classical models run exactly as Phase 1 specified them — same search
-space, same selection rule, same config — so the comparison's classical side
-is a Phase 1-protocol rerun on real data, not a re-design.
+Run both classical models using the released Phase 1 protocol on the same
+frozen dataset, mapping and splits planned for PhoBERT. Retain their actual
+validation metrics, configuration, preflight provenance, and artifact
+hashes before starting the deep arm.
 
 ### 1.2 Why XLM-R is not mandatory for M1 (and what it is instead)
 
@@ -93,102 +88,57 @@ is a Phase 1-protocol rerun on real data, not a re-design.
 
 ## 2. Data contract
 
-### 2.1 Input files and layout
+### 2.1 Dataset layout and access
 
-Exactly the Phase 1 layout, unchanged (`data/README.md`,
-`vfi.data.loading.load_split`):
+Select one authorized local adapter using the
+[Phase 1 data layouts](../../data/README.md). The default independent
+workflow exports human-approved JSONL to physically separate `train.jsonl`,
+`validation.jsonl`, and `test.jsonl`. Authorized CSV adapters use separate CSV
+files for the same splits. Record the label mapping and any exclusions for
+the chosen adapter. NEU-ESC requires provider access approval and an explicit
+policy for Toxic. The five-level CSV mapping and domain limits must travel
+with its results.
 
-```text
-data/raw/uit_vsfc/
-  train/{sentences.txt, sentiments.txt}
-  validation/{sentences.txt, sentiments.txt}
-  test/{sentences.txt, sentiments.txt}
-```
-
-- One sentence per line in `sentences.txt`; one raw integer (0/1/2) per line
-  in `sentiments.txt`; line i of one corresponds to line i of the other.
-- Encoding: read as `utf-8-sig` (BOM-tolerant) — Phase 1 behavior
-  `[VERIFIED FACT from source]`.
-- Files are never committed; nothing under `data/raw/` is tracked.
-- Expected scale for planning only: ≈16k sentences, commonly cited split
-  train 11,426 / validation 1,583 / test 3,166 `[ESTIMATE — secondary
-  sources disagree; the delivered files are authoritative]`.
+UIT-VSFC is optional and remains blocked without its usage agreement and a
+verified raw label mapping. It is outside the current plan. Its historical
+roughly 16k-row scale is used only for the compute estimates in §7.
 
 ### 2.2 Fingerprint expectations
 
-Recorded once at the integrity gate and copied verbatim into every artifact
-metadata and report:
-
-1. **File fingerprints**: sha256 of each of the six raw files.
-2. **Record fingerprints**: the order-sensitive record fingerprint from
-   `vfi.data.validation.fingerprint` per split (already produced by
-   `vfi prepare-data`) — captures the normalized text + label sequence, so
-   any reordering or relabeling of the delivered files changes it.
-3. **Derived-data fingerprints** (added by M1): after segmentation, a
-   fingerprint of the segmented line sequence per split (sha256 of the
-   `"\n".join(segmented_lines)`), recorded in `derived_data` metadata so
-   experiments cite a rebuildable, verifiable artifact, not a hand-edited
-   file.
-
-Any change to a raw file invalidates all downstream fingerprints and reopens
-the integrity gate — the same freeze rule as `experiment-blueprint.md` §3.2.
+1. Before fitting, use the selected dataset configuration to run `vfi prepare-data`
+   and `vfi evaluate --preflight-only`. Retain the passing
+   `evaluation_preflight.json`: identity/version, adapter and mapping
+   provenance, source digests, and effective record fingerprints for all
+   three splits.
+2. Run `vfi train` with that configuration for the two classical fits.
+   Training metadata contains effective train and validation fingerprints
+   and configuration and artifact hashes. Save both real classical
+   validation reports and their frozen artifact evidence before fine-tuning.
+3. Segment and fingerprint train and validation for fit and selection.
+   Produce and fingerprint the holdout's segmented sequence only in final
+   evaluation. Final scoring must match the preflight and training record.
+   Any change to the data, mapping, or holdout requires a fresh comparison.
 
 ### 2.3 Behavior on schema violation
 
-Phase 1's loader is already fail-fast; M1 adds no tolerance:
+| Violation | Behavior |
+| --------- | -------- |
+| Missing or malformed train/validation split, empty feedback, invalid labels or annotation | Fail before fit. The adapter reports safe split and location details where available. |
+| No independent test holdout | Allow validation-only work. Preflight and benchmark scoring remain blocked. |
+| Cross-split exact duplicates or contradictory labels | Fail preflight. Resolve locally and record the policy without exposing feedback. |
+| Possible near-duplicate matches | Review locally. The bounded audit is advisory and does not remove records. |
+| Mismatched identity, mapping, or fingerprint during final evaluation | Fail before scoring and establish a new preflight and fit record if the dataset version changes. |
 
-| Violation | Detected by | Behavior |
-| --------- | ----------- | -------- |
-| Missing file | `load_split` → `DataLoadingError` | Loud failure naming the path; no partial artifacts |
-| Line-count mismatch | `load_split` → `DataLoadingError` | Loud failure naming the split and the two counts |
-| Empty sentence line | `load_split` → `DataLoadingError` (line number included) | Loud failure; no silent skip |
-| Non-integer or out-of-range label (not 0/1/2) | `load_split` → `DataLoadingError` (line number included) | Loud failure |
-| Unknown canonical label after mapping | impossible by construction (mapping is total over {0,1,2}) | n/a |
-| Label values distribution nonsensical (e.g. one class ≈ 0 everywhere) | integrity-gate distribution check | **Investigation gate**, not auto-pass — may indicate the wrong mapping (see §2.4) |
+### 2.4 Verify label semantics
 
-Failure output discipline: error messages carry split names and line
-numbers only — never sentence text. The error report (committed) contains
-counts and line indices; the offending lines themselves stay local.
-
-### 2.4 The label-audit gate (blocking pre-step, part of G2)
-
-**Nothing in M1 runs on real data until this gate passes — including the
-classical models.** A cyclically-permuted label mapping leaves accuracy and
-macro-F1 untouched (consistent permutations preserve both) while inverting
-every per-class claim
-([label-semantics-evidence.md](label-semantics-evidence.md) §6), so no
-metric-based sanity check can substitute for the audit.
-
-Procedure (unchanged from `experiment-blueprint.md` §3.3; hypotheses from
-[label-semantics-evidence.md](label-semantics-evidence.md) §7):
-
-1. **Author documentation first.** The signed-corpus package is checked for
-   label-encoding documentation; the pre-written question block
-   ([label-semantics-evidence.md](label-semantics-evidence.md) §8) was
-   included in the G1 email. Whatever the author states wins over all
-   secondary sources.
-2. **Blind audit second.** 15 lines per raw value (0/1/2) per split —
-   135 lines, 45 per class. Two readers judge polarity from text alone,
-   blind to the integer and to each other's judgments.
-3. **Pre-registered hypotheses.** H1 (expected): raw 0=negative, 1=neutral,
-   2=positive — the authors' own card/script/served-data layer. H2:
-   0=positive, 1=negative, 2=neutral — the SEACrowd layer, which Phase 1's
-   hard-coded `RAW_SENTIMENT_TO_LABEL` currently assumes. The audit decides
-   between them; a conflict between author answer and audit triggers
-   investigation, not silent acceptance of either.
-4. **Pass criteria** (per raw value): ≥ 90% of sampled lines judged with the
-   mapped polarity, and both readers individually ≥ 85%; distribution
-   corroboration shows a plausible profile (positive-majority expected for
-   student feedback `[ASSUMPTION]`).
-5. **Fail criteria**: any class < 80%, or a systematic inversion pattern
-   (e.g. raw `0` lines consistently negative under H2's reading), or
-   author-vs-audit conflict unresolved.
-6. **On pass**: the mapping used by every M1 loader is the audited one; the
-   audit report (sample design, per-reader per-class agreement, decision) is
-   committed; fingerprints and the mapping hash enter all metadata.
-7. **On fail**: stop (§13a). If H1 is confirmed, Phase 1's loader mapping
-   must be corrected first — a Phase 1-branch code change, owned by the
-   Phase 1 maintainer, **not** done inside this readiness clone.
+Audit the selected dataset's documented labels and local human annotations,
+then freeze their mapping into the canonical classes. Resolve unsupported
+or ambiguous labels before training classical or deep models. Summary
+scores cannot verify semantics; a label permutation can preserve aggregate
+scores while changing the class meanings. The optional UIT-VSFC adapter's
+historical 0/1/2 conflict and alternatives are documented in
+[label-semantics-evidence.md](label-semantics-evidence.md); neither meaning
+may be assumed if that adapter is ever authorized.
 
 ## 3. Tokenization contract
 
@@ -201,7 +151,7 @@ collapse), reused unmodified.
 
 | Step | `majority` | `tfidf-logreg` | `phobert-base-ft` |
 | ---- | ---------- | -------------- | ----------------- |
-| 1. Load | `load_split` (labels only matter) | `load_split` | `load_split` |
+| 1. Load | Selected Phase 1 adapter | Same adapter and records | Same effective fit and selection records |
 | 2. Normalize | `normalize_text` (in loader) | `normalize_text` (in loader) | `normalize_text` (in loader) |
 | 3. Word segmentation | none | none | `py_vncorenlp` RDRsegmenter, `annotators=["wseg"]`, `word_segment(text)` → underscore-joined string; then a defensive whitespace re-collapse `[VERIFIED FACT for the requirement; chain per tokenization-design.md §7]` |
 | 4. Tokenization | none needed | `TfidfVectorizer` internals (`lowercase=True`, word 1-2 / char_wb 2-5) | `AutoTokenizer.from_pretrained("vinai/phobert-base")` (fastBPE, 64,001 types `[VERIFIED FACT]`) |
@@ -224,14 +174,14 @@ the vectorizer (config-recorded); PhoBERT's tokenizer is case-preserving.
   `underthesea` (`word_tokenize(..., format="text")`) is the pinned,
   documented fallback — a different segmenter, never mixed with RDRsegmenter
   within one experiment.
-- The segmenter is treated as a **pure `str -> str` function**, applied
-  identically to train, validation, and test, once, before any training.
-  Outputs are cached as derived files (rebuilt only from frozen raw files,
-  never hand-edited) with per-split fingerprints (§2.2).
-- **Determinism is demonstrated, not assumed** `[ASSUMPTION that RDRsegmenter
-  is deterministic; verified empirically]`: each split is segmented twice in
-  separate process invocations; the two per-split fingerprints must be
-  identical. Additionally, a golden-file test pins N fixed sentences →
+- Treat the segmenter as a **pure `str -> str` function**. Cache train
+  and validation before fitting, and cache test inside final evaluation.
+  Rebuild derived files from the frozen sources, keep them local, and
+  record their fingerprints (§2.2).
+- **Check determinism before fitting.** Segment train and validation twice
+  in separate processes and compare the fingerprints. Use the same pinned
+  transformation on the holdout during final evaluation. A golden-file
+  test additionally pins N fixed sentences to an
   exact expected underscore-joined output for the recorded tool+model
   version, failing loudly on version drift. If determinism cannot be shown,
   the PhoBERT arm halts (§13b).
@@ -240,11 +190,10 @@ the vectorizer (config-recorded); PhoBERT's tokenizer is case-preserving.
 ### 3.3 Identical treatment across splits
 
 One segmentation run per split, same tool, same version, same code path —
-no split-specific options, no per-split "tuned" segmentation. The training
-loop consumes the cached segmented files; validation and test inference
-consume theirs. At inference time (latency protocol, §12), the same chain
-runs per text — the predict function must include segmentation so the
-measured latency is honest end-to-end cost.
+with identical options. The training loop consumes only train/validation
+caches. The final evaluation path alone segments the holdout. For inference
+latency (§12), run the same chain per text and include segmentation in the
+timing to measure end-to-end cost.
 
 ### 3.4 Truncation policy (max_length 256)
 
@@ -252,15 +201,11 @@ measured latency is honest end-to-end cost.
   longer than 256 subword tokens are truncated from the **right**
   (single-sequence inputs; sentiment cues near the end are lost by design
   and documented).
-- Before the first fine-tune, the token-length distribution of the
-  **segmented train split** is measured (p50/p95/p99/max) and the
-  truncation rate per split is computed and recorded in metadata. UIT-VSFC
-  sentences are expected to be short, so a p99 ≤ 256 is expected
-  `[ESTIMATE, unverified]`.
+- Before the first fine-tune, measure length on the **segmented train split**
+  (p50/p95/p99/max) and record train and validation truncation rates.
+  Record the holdout rate only in final evaluation.
 - If the measured tail is meaningful (p99 > 256 or truncation rate > ~1% on
-  any split), it is recorded as a **known limitation** in the report — not
-  silently absorbed, and not a reason to raise max_length beyond the model
-  maximum in M1.
+  any split), record the limitation. Freeze the policy before holdout scoring.
 
 ### 3.5 Segmentation error logging (no raw text ever)
 
@@ -362,9 +307,10 @@ M1 retry loop on validation.
 
 ### 7.1 Wall-clock `[ESTIMATE]` per stage, with uncertainty
 
-All figures assume the `[MEASURED]` hardware (RTX 3060 Laptop 6 GB,
-i5-10500H, 32 GB RAM) and cite their arithmetic. Uncertainty factor ≈ 2× on
-GPU figures (thermals, background load) — nothing below is measured.
+These estimates use the measured laptop hardware (RTX 3060 Laptop 6 GB,
+i5-10500H, 32 GB RAM) and the historical UIT-VSFC-sized planning scenario.
+Recalculate using the selected dataset. The GPU-time uncertainty factor
+is approximately 2× due to thermals and background load.
 
 | Stage | Wall clock | Basis |
 | ----- | ---------- | ----- |
@@ -405,10 +351,10 @@ No batch size is guaranteed before measurement. If CUDA OOM occurs:
 | | Validation split | Test split |
 | - | ---------------- | ---------- |
 | When computed | Freely and repeatedly: per-epoch during training, checkpoint selection, error analysis, diagnostics, the §13d floor check | Exactly once per final configuration, after selection froze |
-| Where computed | In the training loop | Only by the dedicated evaluation path (`vfi evaluate` equivalent), never inside the training loop |
+| Where computed | In the training loop | Only by the dedicated evaluation path, after checking the holdout against preflight and model provenance |
 | Metrics | `compute_metrics` full schema; macro-F1 drives decisions | Same `compute_metrics` full schema |
 | Artifacts | Per-epoch JSONL (§9), per-sample dump for error analysis (local, gitignored) | One ledger-recorded evaluation JSON per configuration, committed (aggregates only) |
-| May it change the model? | Yes — that is its purpose | No — a number that triggers any change converts the run into a **deviation**, documented, and the affected configuration's test count increments |
+| May it change the model? | Yes, before final selection freezes | Keep selection closed. Test-informed changes require a separate comparison and fresh holdout. |
 
 Metrics schema (identical to Phase 1, `[VERIFIED FACT from
 vfi.evaluation.metrics]`): accuracy, macro precision/recall/F1, per-class
@@ -455,13 +401,12 @@ validation:
 - Classical models keep Phase 1's report JSONs (trial list, fit seconds) —
   no new log format invented for them.
 
-**Log hygiene rules** (hard requirements, unit-tested):
+**Log hygiene rules** (required and testable):
 
-1. No raw student text anywhere in logs — not inputs, not decoded token
-   sequences, not error messages that embed text (§3.5 sanitizer).
-2. No person-identifying metadata (student names do not appear in the
-   corpus, but any incidental identifier found in text must never be copied
-   into a log — the rule is: indices and aggregates only).
+1. Keep raw feedback and decoded token sequences out of logs and error messages
+   (§3.5 sanitizer).
+2. Keep identifying metadata and any identifiers found in feedback out of logs.
+   Keep per-sample indices local.
 3. Line indices and split names are the only per-sample keys allowed.
 4. Committed reports carry aggregates and category labels
    (`evaluation-protocol.md` §9); raw JSONL stays local.
@@ -470,8 +415,9 @@ validation:
 
 Phase 1's provenance pattern (`build_training_metadata`: created_at, config,
 config_hash, dataset_fingerprints, sklearn_version, python_version, seed
-`[VERIFIED FACT from source]`) is extended, not replaced. M1 deep-arm
-`meta.json` skeleton:
+`[VERIFIED FACT from source]`) extends to the example M1 deep-arm
+`meta.json` below. Keep holdout data and derived diagnostics in the
+separate preflight and final evaluation evidence.
 
 ```json
 {
@@ -483,18 +429,17 @@ config_hash, dataset_fingerprints, sklearn_version, python_version, seed
               "head": "linear_cls_dropout0.1"},
   "config_hash": "<same scheme as Phase 1>",
   "code": {"git_sha": "<exact commit of the run>", "vfi_version": "<x.y.z>"},
-  "dataset": {"source": "UIT-VSFC via signed agreement",
-               "agreement_signed": true,
-               "file_sha256": {"train/sentences.txt": "<...>", "...": "<...>"},
-               "record_fingerprints": {"train": "<...>", "validation": "<...>", "test": "<...>"},
-               "label_mapping": {"0": "negative", "1": "neutral", "2": "positive"},
-               "label_mapping_basis": "author + blind audit (G2 report)"},
+  "dataset": {"id": "<selected dataset>", "version": "<frozen version>",
+               "adapter": "<name and version>", "rights_reference": "<local evidence reference>",
+               "source_fingerprints": {"train": "<...>", "validation": "<...>"},
+               "record_fingerprints": {"train": "<...>", "validation": "<...>"},
+               "label_mapping_reference": "<verified mapping and policy evidence>"},
   "derived_data": {"segmenter": "py_vncorenlp", "segmenter_version": "<x.y.z>",
                     "segmenter_model_fingerprint": "<sha256 of model dir>",
                     "tokenizer_id": "vinai/phobert-base",
                     "tokenizer_config_hash": "<sha256 of tokenizer config>",
-                    "segmented_split_fingerprints": {"train": "<...>", "...": "<...>"},
-                    "token_length_p99_train": 0, "truncation_rate": {"train": 0.0, "validation": 0.0, "test": 0.0}},
+                    "segmented_split_fingerprints": {"train": "<...>", "validation": "<...>"},
+                    "token_length_p99_train": 0, "truncation_rate": {"train": 0.0, "validation": 0.0}},
   "libraries": {"python": "<3.x>", "torch": "<x.y.z+cuXYZ>", "transformers": "<x.y.z>",
                  "tokenizers": "<x.y.z>", "cuda_driver": "<...>", "java": "<...>",
                  "sklearn": "<classical arm only>"},
@@ -505,16 +450,16 @@ config_hash, dataset_fingerprints, sklearn_version, python_version, seed
              "confirmed_deterministic_repeat": null},
   "checkpoint": {"selected_epoch": 0, "selected_val_macro_f1": 0.0,
                   "checkpoint_sha256": "<...>"},
-  "artifacts": {"model.safetensors": "<sha256>", "meta.json": "<sha256>"},
-  "commands": {"train": "<exact command line>", "evaluate": "<exact command line>"},
-  "timings": {"train_wall_s": 0.0, "per_epoch_wall_s": [0.0], "evaluate_wall_s": 0.0}
+  "artifacts": {"model.safetensors": "<sha256>"},
+  "commands": {"train": "<exact command line>"},
+  "timings": {"train_wall_s": 0.0, "per_epoch_wall_s": [0.0]}
 }
 ```
 
-Rules carried over from Phase 1: the trusted-artifact load policy (only
-load artifacts this project produced, config-hash present, version-match
-warning) applies unchanged; a report number without complete provenance is
-an anecdote, not a result (`evaluation-protocol.md` §8).
+Use trusted local artifacts. Validate config and artifact hashes and check
+software versions. Final evaluation evidence adds the matching preflight
+receipt, test fingerprint, and scoring command and timing
+(`evaluation-protocol.md` §8).
 
 ## 11. Error analysis
 
@@ -528,17 +473,12 @@ selection — never on search/retry candidates, of which M1 has none).
    (true → predicted); the 3×3 error-count matrix and per-cell share of all
    errors are committed.
 3. **Recurring categories, evidence-gated**: a pattern may be stated only
-   with (i) the cell count, (ii) the share of the cell it covers, and
-   (iii) ≥ 3 examples cited by **line index** with at most short truncated
-   fragments — or paraphrases — explicitly marked "truncated" /
-   "paraphrased". Patterns without counts are not published.
-4. **Privacy**: raw student text must stay out of every committed path —
-   conditional on the G3/R-08 hardening landing first (the gitignore gaps
-   for torch-era `*.bin`/`*.pt` files are verified open, and Phase 1's
-   `data_report.json` already embeds duplicate raw texts, R-05). Per-sample
-   dumps and full texts stay in local gitignored directories.
-   Classical-vs-deep error comparison uses paired line indices on the same
-   validation samples (`evaluation-protocol.md` §7).
+   with the cell count, the share of the cell it covers, and at least three
+   examples reviewed locally.
+4. **Privacy**: publish aggregate counts and non-identifying categories.
+   Keep per-sample dumps, indices, and feedback local in ignored directories.
+   Compare the same validation records using paired indices locally
+   (`evaluation-protocol.md` §7).
 5. **Floor interaction**: if §13d triggered (below-baseline validation),
    error analysis is part of the investigation — it does not authorize any
    test run.
@@ -572,18 +512,17 @@ that number (comparability) and adds visibility into where the time goes:
 
 | Case | Trigger | Action |
 | ---- | ------- | ------ |
-| (a) **Label audit fails** | §2.4 fail criteria, or author-vs-audit conflict | Full stop — no model (classical included) touches real data. The mapping correction is a Phase 1-branch change (owner's action, since it edits Phase 1 code); re-audit after correction; gate reopens. Nothing in M1 proceeds on a "probably right" mapping. |
+| (a) **Label audit fails** | Unknown or contradictory label meanings (§2.4) | Stop real fitting. Verify the selected adapter's mapping against local evidence and rerun preflight before either baseline or PhoBERT fits. |
 | (b) **Segmentation determinism cannot be shown** | Double-segmentation fingerprints differ, or golden-file test fails on the pinned version | Halt the PhoBERT arm. Debug tool/JVM version drift; if a pinned working version is found, re-run the determinism proof and continue. If unresolvable: `phobert-base-ft` = `BLOCKED(segmentation)`; documented options (owner decides): pinned `underthesea` path (same determinism proof required) or the XLM-R fallback (§1.2) with the protocol deviation recorded. |
-| (c) **VRAM insufficient even at minimum micro-batch** | OOM at micro-batch 1 × seq 256 × fp16 (§7.2 step 4) | Hardware-failure verdict: full fine-tune = `BLOCKED(compute)` with the OOM logs as evidence. Fallbacks (owner decides): frozen-encoder variant (encode once + logistic head, CPU-feasible, `experiment-matrix.md` E6) — noted as a protocol deviation from "one fine-tuned PhoBERT"; or cloud GPU (corpus-agreement hosting gate first). Claims scoped accordingly; M1 does not silently become a different experiment. |
+| (c) **VRAM insufficient even at minimum micro-batch** | OOM at micro-batch 1 × seq 256 × fp16 (§7.2 step 4) | Hardware-failure verdict: full fine-tune = `BLOCKED(compute)` with the OOM logs as evidence. Fallbacks (owner decides): frozen-encoder variant (encode once + logistic head, CPU-feasible, `experiment-matrix.md` E6) — noted as a protocol deviation from "one fine-tuned PhoBERT"; or cloud GPU (selected dataset's hosting permission and owner approval first). Claims scoped accordingly; M1 does not silently become a different experiment. |
 | (d) **Validation macro-F1 below the majority baseline** | Best checkpoint's validation macro-F1 < majority's validation macro-F1 (same split, same metric code) | **No test run. No claims.** Investigate in order: (1) pipeline bug — label mapping, segmentation cache corruption, truncation anomaly (check `truncated_train_fraction`, confusion matrix shape); (2) training pathology — collapsed class (per-class recall ≈ 0), loss divergence (fp32 retry per §7.2.3 is the only allowed single re-run, recorded as a deviation); (3) if investigation finds no bug, the result stands as an honest single-run finding: reported as-is with single-seed phrasing, flagged to the owner, and M2 (seeds + optionally search) becomes the escalation path — *never* a seed retry loop run until the number beats the baseline. |
 | (e) **Dependency version drift from the plan** | Installed torch/transformers/segmenter differ from the pinned stack (G4) at any stage | Before training: re-run the golden-file tests (segmentation, tokenization, seed determinism) against the actual versions; record actual versions in metadata regardless. Drift discovered mid-M1: stop, re-pin, re-run the affected stages from their fingerprints; the report states which versions produced which numbers. A major-version mismatch in torch/transformers invalidates prior checkpoints (Phase 1's sklearn rule, generalized). |
 
 ## 14. Implementable now vs gated work
 
-Status of each pilot step **today**, with this clone holding docs only
-(no venv for Phase 2 deps, no dataset, gates G1-G4 open). "Codeable" = can
-be written and unit-tested with synthetic fixtures; "executable" = can
-actually run.
+The readiness branch includes released Phase 1 code. The deep-arm
+implementation and runs still require approval. Synthetic fixtures can
+exercise scaffolding without supporting any performance claim.
 
 | Step | Needs dataset? | Needs torch/transformers? | Status today |
 | ---- | -------------- | -------------------------- | ------------ |
@@ -595,10 +534,10 @@ actually run.
 | Tokenization chain implementation + truncation boundary tests (255/256/257) + golden-file segmenter tests | No (fixtures) | Yes (transformers) + JVM/py_vncorenlp | Codeable now; executable after **G4** (stack) — golden files themselves need the pinned segmenter |
 | PhoBERT training loop (AMP, accumulation ladder, early stopping, JSONL hooks) + OOM-ladder logic, tested on synthetic tensors | No (synthetic) | Yes | Codeable now; executable on synthetic data after **G3 + G4** (first checkpoint download is gated by G3) |
 | VRAM probe (forward/backward at seq 256, micro-batch ladder) — replaces §7.1's estimates with `[MEASURED]` | No | Yes | After **G3 + G4**; minutes `[ESTIMATE]`; no dataset needed |
-| E1 integrity gate + label audit on delivered files | **Yes** | No | `[BLOCKED]` until **G1 + G2** |
-| E2/E3 classical models on real data | **Yes** | No | `[BLOCKED]` until **G1 + G2** (audit gate blocks classical too, §2.4) |
-| M1 PhoBERT fine-tune (seed 42) | **Yes** | Yes | `[BLOCKED]` until **G1 + G2 + G3 + G4** |
-| Latency/error-analysis on real validation samples | **Yes** | Yes (deep arm) | `[BLOCKED]` until **G1 + G2** (+ training done) |
+| E1 integrity preflight on selected data | **Yes** | No | Requires authorization, verified mapping and a separate holdout |
+| E2/E3 classical models on real data | **Yes** | No | Requires passing preflight. Freeze both real validation reports and fitted artifacts. |
+| M1 PhoBERT fine-tune (seed 42) | **Yes** | Yes | Requires E2/E3 evidence on the same dataset, all readiness gates, and owner approval |
+| Latency/error analysis on real validation samples | **Yes** | Yes (deep arm) | Requires selected dataset and frozen fitted artifacts |
 
 Reading: the entire scaffolding layer (data contract, logging, metadata,
 seed utility, classical wiring, and the code of the training loop) is
@@ -606,15 +545,12 @@ codeable immediately against synthetic fixtures — that is the honest
 "progress without the dataset" story. Every number, including the
 `[ESTIMATE]` replacements from the VRAM probe, waits on the gates.
 
-## 15. Consistency notes (what this plan changes elsewhere)
+## 15. Related plans
 
-- `experiment-blueprint.md`: §2 (M1 marking, XLM-R fallback note), §3.3
-  (evidence cross-reference, H1/H2 prior), §4 (max length 128 → 256), §6
-  (seed set {42, 7, 2026}), §7 (search marked M2), §10 (batch geometry at
-  seq 256), §11 (OOM ladder wording).
-- `experiment-matrix.md`: §2 arithmetic re-based to micro-batch 8 × seq 256
-  × accum 4; new row E4p (the M1 fixed-recipe run); E4/E5 marked M2;
-  milestone column; completion criteria re-cut by milestone; escalation
-  flow updated.
-- Reconciled (2026-11-07 QA pass): `evaluation-protocol.md` §5 now uses the
-  escalation set {42, 7, 2026}.
+- [Experiment blueprint](experiment-blueprint.md) defines the shared dataset
+  and holdout contract and the M2 escalation.
+- [Experiment matrix](experiment-matrix.md) separates actual prerequisites
+  from compute estimates and optional work.
+
+- [Evaluation protocol](evaluation-protocol.md) defines comparable results,
+  reporting boundaries, and the M2 seed set.

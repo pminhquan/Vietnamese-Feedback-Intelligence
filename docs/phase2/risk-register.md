@@ -3,11 +3,16 @@
 Prepared by: Research Agent E (Security, Privacy & Failure-Mode Review), Phase 2 readiness program.
 Date: 2026-11-07.
 Scope: threats introduced or amplified by **Phase 2** (fine-tuning a Vietnamese pretrained
-transformer, e.g. PhoBERT, on UIT-VSFC student feedback), on top of the Phase 1 codebase.
+transformer on an authorized Vietnamese sentiment dataset), on top of Phase 1.
 
 Reviewed Phase 1 ref: `95f7687735c785367fa0a6f9b1efbf0e284aac7f` (head of
 `phase1/classical-ml-baselines`, Draft PR #1: OPEN, MERGEABLE, CI green — verified via
 `gh pr view 1`). File:line citations below refer to that commit unless stated otherwise.
+
+Release update (2026-11-15): the legacy citations describe the historical
+audit. Current Phase 1 on main includes adapters, grouped splitting, exact
+preflight, aggregate reports, checksum verification and CI structural checks.
+See [release dependencies](phase1-dependencies.md) for what Phase 2 can reuse.
 
 ## Evidence legend
 
@@ -192,17 +197,16 @@ violating a signed-agreement dataset is worse than never starting.
 **Severity: High.**
 
 **Mitigation.**
-1. Hard gate: no Phase 2 training run on real data until the owner records that the signed
-   agreement was returned (extend `AGENTS.md` rule 5 to Phase 2 explicitly).
-2. Record provenance in every run's metadata: source channel ("author email, agreement signed
-   on YYYY-MM-DD"), not just file fingerprints. Phase 1's metadata convention
-   (`baseline.py:226-243`) is the place to add a `dataset_provenance` field.
-3. `vfi prepare-data` already fingerprints each split (`cli.py:81`); keep that as the
-   tamper-evidence mechanism and store the "expected" fingerprints alongside the provenance note.
+1. Require access evidence for the selected dataset, including collection and use
+   authorization for owner-collected feedback. UIT-VSFC is optional and still
+   requires a signed agreement before any use.
+2. Record adapter identity, version, label policy and source-specific access evidence.
+3. `vfi evaluate --preflight-only` records all effective split fingerprints.
+   Retain that evidence with the two baseline run records.
 4. Agents must not add download scripts that bypass the agreement (`AGENTS.md:20-23`).
 
-**Responsibility.** *Owner:* sign and return the agreement; state when permission exists.
-*Agent:* refuse/flag any data acquisition path that bypasses it; add provenance fields.
+**Responsibility.** The owner verifies the source's permitted use. The
+experimenter records that evidence before fitting.
 
 **Evidence.** [VERIFIED FACT] `docs/dataset-uit-vsfc.md:6-18` (verdict BLOCKED, license
 unknown, agreement required), `:53-57` (author's repo instruction to sign the agreement);
@@ -305,21 +309,19 @@ limitation), `splitting.py:41-46` (no dedup before fallback split).
 
 ## R-07 — Ambiguous raw-vs-canonical label mapping
 
-**Description.** Raw UIT-VSFC integers are mapped `0=positive, 1=negative, 2=neutral`
-(`loading.py:26`) into the canonical alphabetical space `negative=0, neutral=1, positive=2`
-(`loading.py:29-32`). The two spaces are **inverted orders of each other**, so any Phase 2 code
-that bypasses `RAW_SENTIMENT_TO_LABEL` (e.g. reading `sentiments.txt` directly for a HF
-`Dataset`, or interpreting logits' argmax as a raw id) silently flips positive/negative. The
-whole mapping chain is also **sourced from the SEACrowd loader's `ClassLabel` declaration, not
-the corpus author's documentation** — flagged as unverified in
-`docs/dataset-uit-vsfc.md:37-41` and `data/README.md:29-30` [VERIFIED FACT].
+**Description.** Dataset-specific labels must be interpreted before conversion
+to the canonical space `negative=0, neutral=1, positive=2`. The historical
+SEACrowd and author-published declarations for UIT-VSFC differ. The released
+adapter requires explicit evidence and a mapping for the authorized files.
+Other datasets carry their own label policies. Bypassing the selected adapter
+can silently assign wrong semantics to labels and model outputs.
 
 **Affected assets.** Every label in training, validation, test; all metrics; the confusion
 matrix; any Phase 2 dataset conversion step.
 
-**Likelihood: Medium.** The mapping is explicit and centralized (good), but it has never been
-checked against the author's README (no real data accessed yet), and Phase 2 adds a second
-consumer (tokenizer/trainer pipeline) that might bypass it.
+**Likelihood: Medium.** Phase 2 adds a second consumer which could bypass
+the adapter, apply an incompatible five-level policy or conflate Toxic with
+Negative. The optional UIT-VSFC raw mapping remains unresolved.
 
 **Impact: High.** A silent inversion produces confidently wrong models and metrics; because all
 three classes shift, accuracy may even look plausible, making it hard to notice.
@@ -327,22 +329,19 @@ three classes shift, accuracy may even look plausible, making it hard to notice.
 **Severity: High.**
 
 **Mitigation.**
-1. Owner verifies sample lines against the author's README immediately upon receiving the
-   corpus (already the documented plan: `data/README.md:29-30`,
-   `docs/dataset-uit-vsfc.md:79`), *before* any training run.
-2. Keep the conversion in exactly one place (`RAW_SENTIMENT_TO_LABEL`, `loading.py:26`) and make
-   Phase 2's dataset builder consume `Record` objects — never re-parse `sentiments.txt`.
-3. Add a smoke assertion to `prepare-data` output that per-class counts differ across classes
-   and match author-documented distribution ranges, when available [UNVERIFIED: author README
-   contents not yet accessible].
+1. Review the selected source's label documentation or human annotation
+   evidence before preflight. A distribution check cannot establish mapping.
+2. Reuse the selected local adapter and consume its `Record` objects.
+3. Keep the exact mapping, policy and effective split fingerprints fixed for
+   the classical baselines and the deep pilot.
 4. Any Phase 2 id↔label table must be derived from `LABEL_TO_ID`/`CANONICAL_LABELS`, not
    re-declared.
 
-**Responsibility.** *Owner:* verify against author docs; state the outcome in writing.
-*Agent:* single-source the mapping; forbid re-parsing in Phase 2 code.
+**Responsibility.** The owner records mapping or annotation evidence.
+Phase 2 reuses the Phase 1 conversion path.
 
-**Evidence.** [VERIFIED FACT] `loading.py:8-13, 26-32`; `docs/dataset-uit-vsfc.md:33, 37-41`;
-`data/README.md:15, 29-30`; `project-spec.md:52-54`.
+**Evidence.** [Adapter contract](../../data/README.md) and
+[historical UIT-VSFC mapping evidence](label-semantics-evidence.md).
 
 ---
 
@@ -419,14 +418,13 @@ prevent.
    hash, test fingerprint, metrics) to an append-only `reports/artifacts/test_ledger.jsonl`;
    the committed milestone report must cite its ledger line. >1 test evaluation per selected
    configuration requires a written justification in the report.
-2. Keep the Phase 1 structural separation (train/validate → save → evaluate) unchanged in
-   Phase 2; new training code must not import or touch test records (`cli.py:116` records
-   `test_untouched` — preserve that field).
+2. Use the released preflight before fitting. Training and selection use only
+   train and validation, and the final scoring stage checks the frozen holdout.
 3. Model selection dashboards/summaries read validation metrics only.
 
 **Responsibility.** *Owner:* discipline; approve the single final test evaluation per
-milestone. *Agent:* implement the ledger and preserve the "test untouched" reporting; flag any
-change that makes test data reachable from training code.
+milestone. *Agent:* implement the scoring ledger and keep test data outside
+the training and selection path.
 
 **Evidence.** [VERIFIED FACT] `docs/experiment-protocol.md:9-11, 73-79`; `cli.py:116, 125-126`
 (comment "deliberately NOT touched"), `cli.py:189-220` (unrestricted evaluate); [ASSUMPTION]

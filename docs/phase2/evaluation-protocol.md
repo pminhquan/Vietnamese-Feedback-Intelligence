@@ -1,11 +1,11 @@
 # Phase 2 Evaluation Protocol
 
-Status: **design only** — no runs, no dataset, no metric values. This
-document defines what is recorded, how, and what may be claimed, for every
-Phase 2 experiment. It extends the Phase 1 `docs/experiment-protocol.md`
-without contradicting it: macro-F1 stays the primary metric, the canonical
-label order stays `negative, neutral, positive`, and the metric code is the
-same `vfi.evaluation.metrics` module.
+Status: **design only**. This protocol extends the released
+[Phase 1 experiment protocol](../experiment-protocol.md). Every arm uses a
+single selected, authorized dataset version, the same verified label
+mapping, and the same effective train, validation, and test holdout
+fingerprints. The primary metric is macro-F1 in canonical label order
+(negative, neutral, positive), using the same metric code.
 
 ## 1. Result categories (mandatory labeling)
 
@@ -15,15 +15,32 @@ row is labeled.
 
 | Category | What it is | Produced by | May support selection? | May be quoted as "accuracy"? |
 | -------- | ---------- | ----------- | ---------------------- | ---------------------------- |
-| **A. Validation performance** | Metrics on the official validation split during/after selection | `vfi train` / fine-tuning loop | Yes — it is the selection signal | No — say "validation" |
-| **B. Final test performance** | Metrics on the official test split, produced once per final configuration (per seed) | `vfi evaluate` | Never | Yes — this is the headline |
+| **A. Validation performance** | Metrics on the frozen effective validation split during/after selection | `vfi train` / fine-tuning loop | Yes — it is the selection signal | No — say "validation" |
+| **B. Final test performance** | Metrics on the same frozen test holdout, produced once per final configuration (per seed) | `vfi evaluate` | Never | Yes — this is the headline |
 | **C. Synthetic unit tests** | Hand-computed fixture metrics proving code correctness | pytest suite | Never | Never — "tests passing" is not model quality (Phase 1 honesty rule) |
 | **D. Latency benchmarks** | Wall-clock timings under the fixed protocol (§4) | latency harness | Never | No — environment-relative, hardware-relative; not accuracy |
 | **E. Author-reported context** | Numbers from the UIT-VSFC paper (e.g. MaxEnt ≈ 88% F1) or third-party papers | Citation | Never | No — different protocol, quoted as context only |
 
-Category E deserves emphasis: the corpus authors report ≈88% sentiment F1
-(Maximum Entropy baseline). It predates this project's splits-usage rules,
-metric code, and preprocessing, so it is context, never a comparison row.
+The UIT-VSFC authors' approximately 88% Maximum Entropy F1 is historical
+category E context. The optional UIT-VSFC adapter still requires permission
+and verified mapping. The published result cannot be a comparator for a
+run on the selected independent dataset.
+
+### Prerequisites and holdout access
+
+Before any real fit, verify dataset rights and label semantics and run the
+released all-split preflight. Retain the passing receipt covering dataset
+identity, configuration, adapter provenance and split fingerprints. Only the
+preflight and final evaluation paths read the raw test source. Fit and
+selection have access to train and validation only, including segmentation
+and preprocessing diagnostics.
+
+Before starting the PhoBERT pilot, fit the two Phase 1 baselines on the
+selected data. Retain actual validation reports and hashes of the frozen
+artifacts. Once all final model choices are locked, score each on the same
+test holdout once per predeclared seed. Evaluation requires that its current
+data match the preflight and trained model provenance. Run a new comparison
+on a changed dataset version, mapping or holdout.
 
 ## 2. Metrics recorded (exact fields)
 
@@ -99,7 +116,8 @@ metadata:
 
 - Classical models: single deterministic run (seed 42); no variance to
   report.
-- Fine-tuned models: 3 seeds minimum ({42, 7, 2026}), 5 if the budget allows
+- M1 uses a single pre-declared seed (42), with single-run claim language.
+- M2 fine-tuned models use 3 seeds minimum ({42, 7, 2026}), 5 if the budget allows
   (`experiment-blueprint.md` §6). For each seed: validation macro-F1 of the
   selected checkpoint, test macro-F1 of that checkpoint. Reported as:
   per-seed table + mean ± std across seeds, both on validation and test.
@@ -132,7 +150,7 @@ What this protocol **cannot** deliver, and must never pretend to:
 | 3-5 seeds, overlapping ranges | "Fine-tuning and the baseline are comparable within measured seed variance (X ± Y vs Z ± W)." | Any "better/worse" language for the overlapping quantity. |
 | Difference smaller than measured seed std | Explicitly "comparable within variance" | "Higher" based on point estimates alone. |
 | Comparing to author-reported ≈88% F1 | "For context, the corpus authors report ≈88% F1 with a Maximum Entropy baseline under a different protocol." | Any table row implying protocol-equal comparison. |
-| Any claim beyond this dataset | "On UIT-VSFC student feedback, under this protocol." | Generalization to "Vietnamese sentiment" or "student feedback in general". |
+| Any claim beyond this dataset | "On the selected dataset and version, on its held-out test split, under this protocol." | Generalization to "Vietnamese sentiment" or "student feedback in general". |
 
 Rule of thumb: every comparative sentence names (1) the split, (2) the
 number of runs/seeds, and (3) the variance when measured.
@@ -156,32 +174,30 @@ Procedure:
    share of all errors.
 3. **Recurring categories, evidence-gated.** A "recurring error pattern"
    (e.g. "short declarative praise misread as neutral") may be stated only
-   with: the cell count, the share of the cell it covers, and ≥ 3 index
-   examples cited by line number with at most short truncated fragments.
-   Patterns without counts are not published; vibes are not findings.
+   with the cell count, the share of the cell it covers, and at least three
+   locally reviewed examples. Keep indices and examples local. Publish
+   only aggregate counts and non-identifying categories.
 4. **Cross-model comparison.** Where classical and deep models err
    differently, compare per-cell rates on the same validation samples
    (paired by line index) — this is the honest way to say "the transformer
    fixes X but breaks Y".
-5. **Privacy.** Raw student text must stay out of every committed path —
-   conditional on the G3 artifact/ignore hardening landing first
-   (`00-executive-decision.md` gate G3). The Phase 1 precedent is weaker
-   than "never committed": `reports/artifacts/data_report.json` already
-   embeds the literal text of cross-split duplicates [VERIFIED FACT —
-   risk-register.md R-05], and the gitignore gaps for torch-era files are
-   verified open (R-08). Committed reports carry aggregates, line indices,
-   and at most short truncated fragments, preferring paraphrase; per-sample
-   dumps and full texts stay in local gitignored directories.
+5. **Privacy.** Per-sample dumps and raw feedback stay local in ignored
+   paths. Committed findings use aggregate counts and non-identifying
+   categories. Phase 1 now emits privacy-safe aggregate data reports and
+   includes tracked-file and ignore protections. Keep the same restrictions
+   for Phase 2-derived files, including checkpoints and segmentation caches.
 
 ## 8. Reproducibility metadata (per experiment)
 
-Every trained artifact's metadata and every report JSON carries the Phase 1
-record plus these Phase 2 extensions:
+Training and evaluation records extend the Phase 1 evidence. Keep the
+preflight receipt separately from training metadata. Attach its test
+fingerprint and test-derived metadata to final evaluation records.
 
 | Field | Content |
 | ----- | ------- |
-| `dataset` | source URL/origin, signed-agreement status (yes/no, date), per-split sha256 of raw files, per-split record fingerprints, per-split counts and class distributions |
-| `derived_data` | segmentation tool + version, segmented-split fingerprints (when used), `max_seq_length`, truncation/padding policy, p99 token length measured on train |
+| `dataset` | ID/version, adapter identity and version, rights evidence reference, verified mapping and policy, source and effective fingerprints for the splits used, admissible aggregate counts |
+| `preflight` | Passing receipt identity and SHA-256, effective and source fingerprints, and matching recorded test fingerprint in final evaluation |
+| `derived_data` | segmentation tool + version, segmented source fingerprints for the splits accessed, `max_seq_length`, truncation/padding policy, p99 train token length. Holdout-derived diagnostics go only in evaluation. |
 | `code` | git SHA of the code commit used, `vfi` package version |
 | `config` | full configuration dict + `config_hash` (same scheme as Phase 1) |
 | `libraries` | Python version; torch, transformers, tokenizers, CUDA/driver versions (deep arm); scikit-learn (classical arm); py_vncorenlp or underthesea version |
@@ -200,14 +216,13 @@ reportable number — it is an anecdote and gets labeled as such or omitted.
 
 - **Committed** (`reports/`, markdown): aggregates, category-labeled tables
   (§1), per-class tables, confusion matrices, seed means ± std, error-
-  analysis findings per §7, provenance summaries. No raw student text
-  beyond short truncated fragments per §7.5.
+  analysis findings per §7, and non-sensitive provenance summaries.
 - **Local only** (gitignored): raw dataset, segmented splits, per-sample
   dumps, model checkpoints, raw training logs.
 - **No numbers without a category label and provenance.** A table mixing
   validation and test rows without §1 labels is a protocol violation.
 - **Test evaluations are counted.** The report states how many times the
   test split was evaluated during Phase 2 and for which configurations;
-  the expected count is exactly the number of final-configuration seeds
-  (e.g. 3-5 for the fine-tuned model, 1 for each classical baseline). Any
-  excess is explained, not concealed.
+  the expected count is one per final configuration and seed (three total
+  for M1 if all models qualify). An integrity-only preflight is not a
+  scoring run. Document any departure from the ledger.

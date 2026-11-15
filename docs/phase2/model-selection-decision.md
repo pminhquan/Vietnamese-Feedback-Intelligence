@@ -4,6 +4,10 @@ Status: research recommendation (Phase 2 readiness only). **This document author
 Phase 2 fine-tuning remains unapproved and no weights were downloaded while writing it. It fixes a
 defensible ordering so that when Phase 2 starts, the first experiment is not a debate.
 
+The pilot must use a permitted dataset and the same label mapping and holdout
+as the real majority and TF-IDF + Logistic Regression baselines. UIT-VSFC
+references below are historical evidence about model choice.
+
 Companion notes: [model-landscape.md](model-landscape.md) (verified per-model evidence) and
 [tokenization-design.md](tokenization-design.md) (preprocessing/segmentation contract).
 
@@ -117,7 +121,7 @@ before Phase 2 kicks off, because it decides between the primary candidate and t
 1. FPT.AI publishes license/model-card documentation for ViBERT/vELECTRA → re-evaluate vELECTRA as
    a raw-input (or at least alternative-preprocessing) Vietnamese encoder arm. [ESTIMATE that it
    would be competitive]
-2. UIT-VSFC real token-length distribution shows a meaningful fraction above 256 PhoBERT tokens →
+2. The selected dataset's training token-length distribution shows a meaningful fraction above 256 PhoBERT tokens →
    revisit truncation strategy and the 512-context / raw-input models (XLM-R; BamiBERT if it ever
    becomes available).
 3. No GPU materializes for Phase 2 → prefer CPU-feasible paths; XLM-R vs phobert-base choice

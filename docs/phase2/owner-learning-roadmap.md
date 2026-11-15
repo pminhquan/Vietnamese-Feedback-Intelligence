@@ -8,9 +8,9 @@
 > lại nội dung cũ. Khi gặp chủ đề đã có trong Phase 1 notes, ghi chú này chỉ
 > dẫn bạn **đọc lại mục nào** và **mở rộng thêm cái gì**.
 >
-> Sự trung thực: hiện tại dự án **chưa có** kết quả thí nghiệm thật (dataset
-> UIT-VSFC còn chờ ký thỏa thuận sử dụng). Mọi bài tập dưới đây KHÔNG tạo ra
-> số liệu để "khoe" — chúng tạo ra sự hiểu biết của chính bạn.
+> Dự án chưa có kết quả thí nghiệm thật. Phase 1 đã hỗ trợ dữ liệu độc lập.
+> Bước tiếp theo là chọn nguồn được phép dùng, xác minh nhãn và chuẩn bị
+> holdout trước khi chạy baseline. Các bài tập chỉ phục vụ việc học.
 
 ---
 

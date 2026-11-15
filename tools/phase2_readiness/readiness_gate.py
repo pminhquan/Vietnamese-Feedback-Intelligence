@@ -44,47 +44,70 @@ USAGE
   unknown top-level key). Every parse/validation failure fails CLOSED: the
   verdict is BLOCKED with the reason, never a traceback.
 
-SCHEMA (v1)
-Top level: optional ``schema_version`` (must be 1) plus the 11 required
-category objects listed below. Unknown top-level keys are rejected, and so are
-unknown fields inside a category. Wrong types, out-of-range numbers, invalid
-40-hex SHAs and non-ISO-8601 dates are BLOCKED; a required field that is
-absent, empty, or a ``TODO:`` placeholder yields UNKNOWN (evidence
-insufficient). Placeholder matching is case-insensitive ("todo", "TODO: x",
-"todo x"). Values inside free-form lists and maps (gitignore pattern
-entries, extra pinned-version entries) are not placeholder-scanned; the
-load-bearing slots in those structures are validated independently.
+SCHEMA (v2)
+Top level: required ``schema_version`` (must be 2) plus the 11 required
+category objects listed below. Legacy ``schema_version`` 1 inputs are
+rejected with exit code 2 and a migration hint. Unknown top-level keys are
+rejected, and so are unknown fields inside a category. Wrong types,
+out-of-range/non-finite numbers, invalid 40-hex/64-hex SHAs, non-ISO-8601
+dates, synthetic fixture markers, and mismatched split/holdout fingerprints
+are BLOCKED; a required field that is absent, empty, or a ``TODO:`` placeholder
+yields UNKNOWN (evidence insufficient). Placeholder matching is
+case-insensitive ("todo", "TODO: x", "todo x"). Values inside free-form lists
+and extra pinned-version entries are not placeholder-scanned; load-bearing
+slots (required packages, split fingerprint maps) are validated
+independently.
 
-1. dataset_provenance: source_url (string), license_statement (string),
-   access_condition_class (author_agreement_signed | gated_click_accept |
-   open), agreement_reference (required when the class is
-   author_agreement_signed).
-2. label_mapping_verification: method (author_confirmation | blind_audit),
-   audit_sample_size (positive int; >= 100 for blind_audit),
-   agreement_rate (number in 0-1; blind_audit needs >= 0.9 to PASS),
-   resulting_mapping (three distinct canonical class names drawn from
-   negative/neutral/positive, in raw 0/1/2 order; either audit hypothesis is
-   accepted - the audit decides), quote_reference (required when the method
-   is author_confirmation; missing quote = BLOCKED).
-3. split_definition: train_source, validation_source, test_source (strings),
-   train_size, validation_size, test_size (positive ints),
-   fingerprint_algorithm (string; warning when it is not sha256).
-4. leakage_preflight: exact_match_planned (bool, must be true) and
-   near_duplicate_method (string) + near_duplicate_threshold (number in 0-1).
-   Planning alone is NOT readiness: exact_match_executed and
-   near_duplicate_executed (bools) must be true, each backed by a
-   *_report_reference string, and unresolved_conflicts (int) must be zero;
-   anything executed-but-unreferenced or planned-only is UNKNOWN, and
-   unresolved cross-split conflicts BLOCK. Both check families are required:
-   exact match alone misses R-06 near-duplicates.
+1. dataset_provenance: dataset_id, dataset_version, dataset_adapter
+   (custom_jsonl | five_level_csv | neu_esc | uit_vsfc), synthetic_fixture
+   (bool; true is BLOCKED - synthetic fixtures never pass real readiness),
+   access_condition_class (owner_collected_human_approved | licensed_public |
+   gated_click_accept | author_agreement_signed), source_url (required for
+   external classes, optional for owner_collected_human_approved),
+   license_statement (concrete terms), access_evidence_reference (route-
+   appropriate reference; bool rights_confirmed or checkbox strings never
+   pass). Only uit_vsfc requires author_agreement_signed (and is BLOCKED under
+   any other access class).
+2. label_mapping_verification: method matching the declared adapter:
+   - custom_jsonl -> human_approved_canonical (+ verification_reference)
+   - five_level_csv -> ordinal_five_to_three (+ verification_reference)
+   - neu_esc -> neu_esc_named_labels (+ verification_reference,
+     toxic_policy='exclude', toxic_justification, toxic_excluded_count >= 0;
+     toxic_policy='keep' or 'error' is BLOCKED for training readiness)
+   - uit_vsfc -> blind_audit (audit_sample_size >= 100, agreement_rate >= 0.9,
+     resulting_mapping 0/1/2 permutation, verification_reference) or
+     author_confirmation (resulting_mapping, quote_reference)
+3. split_definition: split_policy (physical | grouped_validation),
+   train_source, validation_source, test_source (strings), train_size,
+   validation_size, test_size (positive ints), fingerprint_algorithm
+   (string; warning when not sha256), train_fingerprint,
+   validation_fingerprint, test_fingerprint (distinct 64-hex sha256 strings).
+4. leakage_preflight: exact_match_planned (bool, must be true),
+   exact_match_executed (bool), exact_match_report_reference (text when
+   executed), preflight_passed (bool), preflight_report_sha256 (64-hex when
+   executed), preflight_synthetic_fixture (bool; true is BLOCKED),
+   preflight_contradictions_count (int, must be 0),
+   preflight_split_fingerprints (map with train/validation/test 64-hex hashes
+   matching split_definition; preflight access to test is allowed and
+   required), near_duplicate_method, near_duplicate_threshold (0-1),
+   near_duplicate_executed (bool), near_duplicate_report_reference (text when
+   executed), near_duplicate_split_fingerprints (all three effective hashes),
+   preflight_created_at (timestamp from the Phase 1 receipt), and
+   unresolved_conflicts (int, must be 0).
 5. phase1_integrity: phase1_head_sha (40-hex), baseline_evidence_reference
-   (string) plus baseline_evidence_sha256 (64-hex integrity hash of the
-   referenced artifact; without it the reference alone is UNKNOWN),
-   test_set_untouched (bool, must be true).
+   (string), baseline_evidence_sha256 (64-hex), baseline_result_scope
+   (train_validation | declared_holdout | synthetic_fixture; synthetic_fixture
+   is BLOCKED), baseline_split_fingerprints (train + validation 64-hex hashes
+   matching split_definition; 'test' is forbidden here),
+   baseline_holdout_fingerprint (64-hex matching split_definition.test_fingerprint
+   when baseline_result_scope is declared_holdout), and
+   baseline_preflight_report_sha256 (same frozen receipt as leakage_preflight),
+   baseline_training_started_at (timestamp from training_report.json), and
+   test_excluded_from_fit_and_selection (bool, must be true).
 6. model_checkpoint: checkpoint_id (string), revision_sha (40-hex),
    license_name (string), weights_format (safetensors passes; pickle_bin is
    BLOCKED per R-01), checksum_recorded (bool, must be true) plus
-   checksum_sha256 (string; required when checksum_recorded is true).
+   checksum_sha256 (64-hex; required when checksum_recorded is true).
 7. tokenization_contract: segmenter_name, segmenter_version,
    determinism_evidence_reference (strings), max_length (positive int;
    warning when it exceeds PhoBERT's documented 256), truncation_side
@@ -121,14 +144,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 OUTPUT_SCHEMA_VERSION = 1
 
 PASS = "pass"
@@ -143,6 +168,40 @@ MAX_PRINTED_VALUE = 120
 TRUNCATION_MARKER = "...[truncated]"
 
 CANONICAL_CLASSES = ("negative", "neutral", "positive")
+DATASET_ADAPTERS = ("custom_jsonl", "five_level_csv", "neu_esc", "uit_vsfc")
+ACCESS_CONDITION_CLASSES = (
+    "owner_collected_human_approved",
+    "licensed_public",
+    "gated_click_accept",
+    "author_agreement_signed",
+)
+EXTERNAL_ACCESS_CLASSES = frozenset(
+    {"licensed_public", "gated_click_accept", "author_agreement_signed"}
+)
+ADAPTER_ALLOWED_ACCESS: dict[str, frozenset[str]] = {
+    "custom_jsonl": frozenset(ACCESS_CONDITION_CLASSES),
+    "five_level_csv": EXTERNAL_ACCESS_CLASSES,
+    "neu_esc": frozenset({"gated_click_accept"}),
+    "uit_vsfc": frozenset({"author_agreement_signed"}),
+}
+LABEL_METHODS = (
+    "human_approved_canonical",
+    "ordinal_five_to_three",
+    "neu_esc_named_labels",
+    "author_confirmation",
+    "blind_audit",
+)
+ADAPTER_ALLOWED_LABEL_METHODS: dict[str, tuple[str, ...]] = {
+    "custom_jsonl": ("human_approved_canonical",),
+    "five_level_csv": ("ordinal_five_to_three",),
+    "neu_esc": ("neu_esc_named_labels",),
+    "uit_vsfc": ("author_confirmation", "blind_audit"),
+}
+SPLIT_POLICIES = ("physical", "grouped_validation")
+BASELINE_RESULT_SCOPES = ("train_validation", "declared_holdout", "synthetic_fixture")
+ALL_SPLITS = ("train", "validation", "test")
+FIT_SPLITS = ("train", "validation")
+
 LABEL_AGREEMENT_THRESHOLD = 0.9
 MIN_BLIND_AUDIT_SAMPLE = 100
 PHOBERT_MAX_LENGTH = 256
@@ -150,6 +209,9 @@ REQUIRED_GITIGNORE_PATTERNS = ("*.bin", "*.pt")
 REQUIRED_PINNED_PACKAGES = ("torch", "transformers", "segmenter")
 PLACEHOLDER_LICENSE_STATEMENTS = frozenset(
     {"unknown", "ok", "yes", "true", "none", "n/a", "na", "tbd", "todo", "tobedone"}
+)
+NON_EVIDENCE_STATEMENTS = PLACEHOLDER_LICENSE_STATEMENTS | frozenset(
+    {"confirmed", "approved", "signed", "accepted", "rights_confirmed"}
 )
 #: Values matching this prefix (case-insensitive, with or without a colon)
 #: are placeholders, not evidence: any text field set to "TODO: ..." /
@@ -164,7 +226,14 @@ def _is_placeholder(value: str) -> bool:
     return normalized == "todo" or normalized.startswith("todo:") or normalized.startswith("todo ")
 
 
+def _is_non_evidence_statement(value: str) -> bool:
+    """Match bare status words ('ok', 'confirmed', 'rights_confirmed', ...)."""
+    return value.strip().lower() in NON_EVIDENCE_STATEMENTS
+
+
 HEX40_RE = re.compile(r"[0-9a-fA-F]{40}")
+HEX64_RE = re.compile(r"[0-9a-fA-F]{64}")
+IDENTIFIER_RE = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}")
 SEMVER_RE = re.compile(r"\d+\.\d+(\.\d+)?([+\-][0-9A-Za-z.\-+]+)?")
 
 # Field kinds understood by the structural validator.
@@ -203,22 +272,32 @@ class FieldSpec:
 
 FIELD_SPECS: dict[str, dict[str, FieldSpec]] = {
     "dataset_provenance": {
-        "source_url": FieldSpec(KIND_TEXT),
+        "dataset_id": FieldSpec(KIND_TEXT),
+        "dataset_version": FieldSpec(KIND_TEXT),
+        "dataset_adapter": FieldSpec(KIND_ENUM, choices=DATASET_ADAPTERS),
+        "synthetic_fixture": FieldSpec(KIND_BOOL),
+        "access_condition_class": FieldSpec(KIND_ENUM, choices=ACCESS_CONDITION_CLASSES),
+        "source_url": FieldSpec(KIND_TEXT, required=False),
         "license_statement": FieldSpec(KIND_TEXT),
-        "access_condition_class": FieldSpec(
-            KIND_ENUM,
-            choices=("author_agreement_signed", "gated_click_accept", "open"),
-        ),
-        "agreement_reference": FieldSpec(KIND_TEXT, required=False),
+        "access_evidence_reference": FieldSpec(KIND_TEXT),
     },
     "label_mapping_verification": {
-        "method": FieldSpec(KIND_ENUM, choices=("author_confirmation", "blind_audit")),
-        "audit_sample_size": FieldSpec(KIND_INT),
-        "agreement_rate": FieldSpec(KIND_NUMBER),
-        "resulting_mapping": FieldSpec(KIND_CLASS_MAPPING),
+        "method": FieldSpec(KIND_ENUM, choices=LABEL_METHODS),
+        "verification_reference": FieldSpec(KIND_TEXT, required=False),
+        "audit_sample_size": FieldSpec(KIND_INT, required=False),
+        "agreement_rate": FieldSpec(KIND_NUMBER, required=False),
+        "resulting_mapping": FieldSpec(KIND_CLASS_MAPPING, required=False),
         "quote_reference": FieldSpec(KIND_TEXT, required=False),
+        "toxic_policy": FieldSpec(
+            KIND_ENUM,
+            required=False,
+            choices=("error", "exclude", "keep"),
+        ),
+        "toxic_justification": FieldSpec(KIND_TEXT, required=False),
+        "toxic_excluded_count": FieldSpec(KIND_INT, required=False),
     },
     "split_definition": {
+        "split_policy": FieldSpec(KIND_ENUM, choices=SPLIT_POLICIES),
         "train_source": FieldSpec(KIND_TEXT),
         "validation_source": FieldSpec(KIND_TEXT),
         "test_source": FieldSpec(KIND_TEXT),
@@ -226,22 +305,37 @@ FIELD_SPECS: dict[str, dict[str, FieldSpec]] = {
         "validation_size": FieldSpec(KIND_INT),
         "test_size": FieldSpec(KIND_INT),
         "fingerprint_algorithm": FieldSpec(KIND_TEXT),
+        "train_fingerprint": FieldSpec(KIND_TEXT),
+        "validation_fingerprint": FieldSpec(KIND_TEXT),
+        "test_fingerprint": FieldSpec(KIND_TEXT),
     },
     "leakage_preflight": {
         "exact_match_planned": FieldSpec(KIND_BOOL),
         "exact_match_executed": FieldSpec(KIND_BOOL),
         "exact_match_report_reference": FieldSpec(KIND_TEXT, required=False),
+        "preflight_passed": FieldSpec(KIND_BOOL),
+        "preflight_report_sha256": FieldSpec(KIND_TEXT, required=False),
+        "preflight_created_at": FieldSpec(KIND_TEXT),
+        "preflight_synthetic_fixture": FieldSpec(KIND_BOOL),
+        "preflight_contradictions_count": FieldSpec(KIND_INT),
+        "preflight_split_fingerprints": FieldSpec(KIND_STRING_MAP),
         "near_duplicate_method": FieldSpec(KIND_TEXT),
         "near_duplicate_threshold": FieldSpec(KIND_NUMBER),
         "near_duplicate_executed": FieldSpec(KIND_BOOL),
         "near_duplicate_report_reference": FieldSpec(KIND_TEXT, required=False),
+        "near_duplicate_split_fingerprints": FieldSpec(KIND_STRING_MAP),
         "unresolved_conflicts": FieldSpec(KIND_INT),
     },
     "phase1_integrity": {
         "phase1_head_sha": FieldSpec(KIND_TEXT),
         "baseline_evidence_reference": FieldSpec(KIND_TEXT),
         "baseline_evidence_sha256": FieldSpec(KIND_TEXT, required=False),
-        "test_set_untouched": FieldSpec(KIND_BOOL),
+        "baseline_preflight_report_sha256": FieldSpec(KIND_TEXT),
+        "baseline_training_started_at": FieldSpec(KIND_TEXT),
+        "baseline_result_scope": FieldSpec(KIND_ENUM, choices=BASELINE_RESULT_SCOPES),
+        "baseline_split_fingerprints": FieldSpec(KIND_STRING_MAP),
+        "baseline_holdout_fingerprint": FieldSpec(KIND_TEXT, required=False),
+        "test_excluded_from_fit_and_selection": FieldSpec(KIND_BOOL),
     },
     "model_checkpoint": {
         "checkpoint_id": FieldSpec(KIND_TEXT),
@@ -359,6 +453,8 @@ def _type_problem(name: str, value: Any, spec: FieldSpec) -> str | None:
     if spec.kind == KIND_NUMBER:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return f"field '{name}' must be a number"
+        if isinstance(value, float) and not math.isfinite(value):
+            return f"field '{name}' must be a finite number"
         return None
     if spec.kind == KIND_BOOL:
         if not isinstance(value, bool):
@@ -413,11 +509,12 @@ def _collect_field_issues(
                 missing.append(name)
             continue
         value = fields[name]
-        if spec.kind in (KIND_TEXT, KIND_ENUM) and isinstance(value, str) and not value.strip():
-            missing.append(f"{name} (empty)")
-            continue
         if spec.kind == KIND_TEXT and isinstance(value, str) and _is_placeholder(value):
             missing.append(f"{name} (placeholder '{PLACEHOLDER_PREFIX}...' value is not evidence)")
+            continue
+        if spec.kind in (KIND_TEXT, KIND_ENUM) and isinstance(value, str) and not value.strip():
+            if spec.required:
+                missing.append(f"{name} (empty)")
             continue
         problem = _type_problem(name, value, spec)
         if problem is not None:
@@ -429,9 +526,26 @@ def _collect_field_issues(
 # schema error points the owner at the concrete evidence to provide.
 STRUCTURAL_ACTIONS: dict[str, str] = {
     "dataset_provenance": (
-        "dataset_provenance: self-declared checkboxes are not evidence - record "
-        "source_url, license_statement, access_condition_class and, for signed "
-        "access, agreement_reference"
+        "dataset_provenance: self-declared checkboxes (e.g. rights_confirmed, "
+        "license_status) are not evidence - record dataset_id, dataset_version, "
+        "dataset_adapter, synthetic_fixture, access_condition_class, "
+        "license_statement and access_evidence_reference"
+    ),
+    "label_mapping_verification": (
+        "label_mapping_verification: record an adapter-appropriate verification "
+        "method and concrete mapping evidence"
+    ),
+    "split_definition": (
+        "split_definition: record split_policy, train/validation/test sources, "
+        "positive sizes, fingerprint_algorithm and 64-hex split fingerprints"
+    ),
+    "leakage_preflight": (
+        "leakage_preflight: record completed non-synthetic preflight evidence "
+        "matching evaluation_preflight.json (sha256 and 3 split fingerprints)"
+    ),
+    "phase1_integrity": (
+        "phase1_integrity: record phase1_head_sha, real baseline artifact scope "
+        "and fingerprints, and test_excluded_from_fit_and_selection"
     ),
 }
 
@@ -452,58 +566,309 @@ def _evaluate_fields(fields: dict[str, Any], category: str) -> CheckOutcome | No
     return None
 
 
+def _looks_synthetic_dataset_id(dataset_id: str) -> bool:
+    """Return True when a structured dataset_id identifies a synthetic fixture."""
+    normalized = dataset_id.strip().lower()
+    tokens = set(re.split(r"[._\-]+", normalized))
+    return bool(tokens & {"synthetic", "fixture", "mock", "dummy"}) or "synthetic" in normalized
+
+
+def _is_valid_source_url(url: str) -> bool:
+    """Return True when source_url is an explicit http(s) URL with a network location."""
+    parsed = urlsplit(url.strip())
+    return parsed.scheme.lower() in {"http", "https"} and bool(parsed.netloc)
+
+
+def _get_declared_adapter(evidence: dict[str, Any]) -> str | None:
+    """Return dataset_provenance.dataset_adapter if declared and valid, else None."""
+    provenance = evidence.get("dataset_provenance")
+    if not isinstance(provenance, dict):
+        return None
+    adapter = provenance.get("dataset_adapter")
+    return adapter if isinstance(adapter, str) and adapter in DATASET_ADAPTERS else None
+
+
+def _check_reference_text(
+    value: Any, *, field_name: str, missing_msg: str, action: str
+) -> CheckOutcome | None:
+    """Validate that an evidence reference string is non-empty and not a bare status."""
+    if not isinstance(value, str) or not value.strip():
+        return _unknown(missing_msg, action)
+    if _is_non_evidence_statement(value):
+        return _unknown(
+            f"'{field_name}' ('{_clip(value.strip())}') is a self-declared status, "
+            "not an evidence reference",
+            action,
+        )
+    return None
+
+
+def _extract_split_fingerprints(evidence: dict[str, Any]) -> dict[str, str] | None:
+    """Extract lowercase 64-hex split fingerprints from split_definition if complete."""
+    split_section = evidence.get("split_definition")
+    if not isinstance(split_section, dict):
+        return None
+    extracted: dict[str, str] = {}
+    for split_name in ALL_SPLITS:
+        raw = split_section.get(f"{split_name}_fingerprint")
+        if not isinstance(raw, str) or not HEX64_RE.fullmatch(raw.strip()):
+            return None
+        extracted[split_name] = raw.strip().lower()
+    if len(set(extracted.values())) != len(ALL_SPLITS):
+        return None
+    return extracted
+
+
+def _parse_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        timestamp = datetime.fromisoformat(value.strip())
+    except ValueError:
+        return None
+    return timestamp if timestamp.tzinfo is not None else None
+
+
+def _validate_split_fingerprint_map(
+    mapping: dict[str, str],
+    *,
+    expected: dict[str, str] | None,
+    required_splits: tuple[str, ...],
+    forbidden_splits: tuple[str, ...],
+    field_name: str,
+    action: str,
+) -> CheckOutcome | None:
+    """Validate a split -> 64-hex sha256 fingerprint dictionary and cross-match splits."""
+    unknown_keys = sorted(key for key in mapping if key not in ALL_SPLITS)
+    if unknown_keys:
+        clipped = ", ".join(_clip(key) for key in unknown_keys)
+        return _blocked(f"'{field_name}' contains unknown split(s): {clipped}", action)
+    for split_name in forbidden_splits:
+        if split_name in mapping:
+            return _blocked(
+                f"'{field_name}' must not contain '{split_name}' "
+                "(fit and selection must exclude the test split)",
+                action,
+            )
+    absent = [split_name for split_name in required_splits if split_name not in mapping]
+    if absent:
+        return _unknown(
+            f"'{field_name}' lacks fingerprint(s) for {', '.join(absent)}",
+            action,
+        )
+    for split_name in required_splits:
+        fp = mapping[split_name].strip()
+        if not HEX64_RE.fullmatch(fp):
+            return _blocked(
+                f"'{field_name}.{split_name}' must be a 64-character hexadecimal "
+                "sha256 fingerprint",
+                action,
+            )
+        if expected is not None and fp.lower() != expected[split_name]:
+            return _blocked(
+                f"'{field_name}.{split_name}' does not match "
+                f"split_definition.{split_name}_fingerprint",
+                action,
+            )
+    return None
+
+
 @check("dataset_provenance")
 def _check_dataset_provenance(fields: dict[str, Any], _evidence: dict[str, Any]) -> CheckOutcome:
-    early = _evaluate_fields(fields, "dataset_provenance")
+    category = "dataset_provenance"
+    early = _evaluate_fields(fields, category)
     if early is not None:
         return early
-    access = fields["access_condition_class"]
-    statement = fields["license_statement"].strip()
-    if statement.lower() in PLACEHOLDER_LICENSE_STATEMENTS:
-        return _unknown(
-            f"'license_statement' ('{_clip(statement)}') does not name a license - "
-            "a self-declared status is not evidence",
-            "dataset_provenance: record the concrete license name and terms from "
-            "the authoritative source",
+    if fields["synthetic_fixture"] is True:
+        return _blocked(
+            "'synthetic_fixture' is true - synthetic fixtures never pass Phase 2 readiness",
+            f"{category}: use real approved data and set 'synthetic_fixture' to false",
         )
-    if access == "author_agreement_signed":
-        reference = fields.get("agreement_reference", "")
-        if not isinstance(reference, str) or not reference.strip():
+    dataset_id = fields["dataset_id"].strip()
+    if not IDENTIFIER_RE.fullmatch(dataset_id):
+        return _blocked(
+            f"'dataset_id' ('{_clip(dataset_id)}') contains disallowed characters",
+            f"{category}: use an alphanumeric identifier matching {IDENTIFIER_RE.pattern}",
+        )
+    if _looks_synthetic_dataset_id(dataset_id):
+        return _blocked(
+            f"'dataset_id' ('{_clip(dataset_id)}') identifies a synthetic/fixture dataset",
+            f"{category}: replace the synthetic fixture with an approved real dataset",
+        )
+    if _is_non_evidence_statement(fields["dataset_version"]):
+        return _unknown(
+            f"'dataset_version' ('{_clip(fields['dataset_version'].strip())}') is not a version",
+            f"{category}: record the concrete dataset version or snapshot identifier",
+        )
+    adapter = fields["dataset_adapter"]
+    access = fields["access_condition_class"]
+    allowed_access = ADAPTER_ALLOWED_ACCESS[adapter]
+    if access not in allowed_access:
+        allowed_str = ", ".join(sorted(allowed_access))
+        return _blocked(
+            f"adapter '{adapter}' is incompatible with access_condition_class "
+            f"'{access}' (allowed: {allowed_str})",
+            f"{category}: set 'access_condition_class' to one of {allowed_str} for '{adapter}'",
+        )
+    source_url = fields.get("source_url", "")
+    if access in EXTERNAL_ACCESS_CLASSES:
+        if not isinstance(source_url, str) or not source_url.strip():
             return _unknown(
-                "access condition 'author_agreement_signed' requires "
-                "'agreement_reference' (signed file or agreement email date)",
-                "dataset_provenance: record the agreement reference (file path or "
-                "the agreement email date)",
+                f"access condition '{access}' requires 'source_url'",
+                f"{category}: record the official dataset http(s) URL in 'source_url'",
             )
-    return _pass(
-        f"provenance complete (self-reported, unverified): access condition '{access}' recorded"
+        if not _is_valid_source_url(source_url):
+            return _blocked(
+                f"'source_url' ('{_clip(source_url.strip())}') must be an http(s) URL",
+                f"{category}: record a valid http(s) URL for the authoritative dataset source",
+            )
+    elif isinstance(source_url, str) and source_url.strip():
+        if _is_non_evidence_statement(source_url):
+            return _unknown(
+                f"'source_url' ('{_clip(source_url.strip())}') is a bare status word",
+                f"{category}: record an actual URL/locator or leave 'source_url' empty",
+            )
+    statement = fields["license_statement"].strip()
+    if _is_non_evidence_statement(statement):
+        return _unknown(
+            f"'license_statement' ('{_clip(statement)}') does not name a license or terms - "
+            "a self-declared status is not evidence",
+            f"{category}: record the concrete license or ownership terms from the source",
+        )
+    access_ref_err = _check_reference_text(
+        fields["access_evidence_reference"],
+        field_name="access_evidence_reference",
+        missing_msg=f"access condition '{access}' requires 'access_evidence_reference'",
+        action=f"{category}: record the route-specific evidence reference for '{access}'",
     )
+    if access_ref_err is not None:
+        return access_ref_err
+    return _pass(f"provenance complete (self-reported, unverified): {adapter} via {access}")
 
 
 @check("label_mapping_verification")
 def _check_label_mapping_verification(
-    fields: dict[str, Any], _evidence: dict[str, Any]
+    fields: dict[str, Any], evidence: dict[str, Any]
 ) -> CheckOutcome:
-    early = _evaluate_fields(fields, "label_mapping_verification")
+    category = "label_mapping_verification"
+    early = _evaluate_fields(fields, category)
     if early is not None:
         return early
-    category = "label_mapping_verification"
+    adapter = _get_declared_adapter(evidence)
     method = fields["method"]
-    sample = fields["audit_sample_size"]
-    rate = fields["agreement_rate"]
-    mapping = fields["resulting_mapping"]
-    pinned = "raw order pinned as 0={}, 1={}, 2={}".format(*mapping)
-    if not 0.0 <= rate <= 1.0:
+    if adapter is not None and method not in ADAPTER_ALLOWED_LABEL_METHODS[adapter]:
+        expected = ", ".join(ADAPTER_ALLOWED_LABEL_METHODS[adapter])
         return _blocked(
-            f"'agreement_rate' {_clip(rate)} is outside the 0-1 range",
-            f"{category}: record the real agreement rate as a number between 0 and 1",
+            f"label mapping method '{method}' is incompatible with dataset_adapter "
+            f"'{adapter}' (expected: {expected})",
+            f"{category}: use an applicable verification method for '{adapter}' ({expected})",
         )
-    if sample <= 0:
+    has_toxic_fields = (
+        bool(str(fields.get("toxic_policy", "")).strip())
+        or bool(str(fields.get("toxic_justification", "")).strip())
+        or fields.get("toxic_excluded_count") is not None
+    )
+    if method != "neu_esc_named_labels" and has_toxic_fields:
+        return _blocked(
+            f"toxic_* fields apply only to 'neu_esc_named_labels' (got method '{method}')",
+            f"{category}: remove toxic_* fields when using method '{method}'",
+        )
+    if method == "human_approved_canonical":
+        ref_err = _check_reference_text(
+            fields.get("verification_reference"),
+            field_name="verification_reference",
+            missing_msg="method 'human_approved_canonical' requires 'verification_reference'",
+            action=f"{category}: reference the human review/approval log for canonical labels",
+        )
+        if ref_err is not None:
+            return ref_err
+        return _pass("human-approved canonical labels verified (self-reported)")
+    if method == "ordinal_five_to_three":
+        ref_err = _check_reference_text(
+            fields.get("verification_reference"),
+            field_name="verification_reference",
+            missing_msg="method 'ordinal_five_to_three' requires 'verification_reference'",
+            action=f"{category}: reference the 5-level ordinal collapse specification",
+        )
+        if ref_err is not None:
+            return ref_err
+        return _pass("ordinal 5-level to 3-class mapping verified (self-reported)")
+    if method == "neu_esc_named_labels":
+        ref_err = _check_reference_text(
+            fields.get("verification_reference"),
+            field_name="verification_reference",
+            missing_msg="method 'neu_esc_named_labels' requires 'verification_reference'",
+            action=f"{category}: reference the NEU-ESC label verification record",
+        )
+        if ref_err is not None:
+            return ref_err
+        toxic_policy = str(fields.get("toxic_policy", "")).strip()
+        if not toxic_policy:
+            return _unknown(
+                "method 'neu_esc_named_labels' requires 'toxic_policy' ('exclude' for training)",
+                f"{category}: set toxic_policy='exclude' with justification and excluded count",
+            )
+        if toxic_policy != "exclude":
+            return _blocked(
+                f"NEU-ESC 'toxic_policy' '{toxic_policy}' cannot pass Phase 2 readiness - "
+                "'exclude' with justification and counts is required",
+                f"{category}: audit and exclude Toxic rows (toxic_policy='exclude') "
+                "before training",
+            )
+        just_err = _check_reference_text(
+            fields.get("toxic_justification"),
+            field_name="toxic_justification",
+            missing_msg="toxic_policy 'exclude' requires 'toxic_justification'",
+            action=f"{category}: record written justification for excluding Toxic rows",
+        )
+        if just_err is not None:
+            return just_err
+        excluded_count = fields.get("toxic_excluded_count")
+        if excluded_count is None:
+            return _unknown(
+                "toxic_policy 'exclude' requires integer 'toxic_excluded_count' (>= 0)",
+                f"{category}: record the audited count of excluded Toxic rows",
+            )
+        if excluded_count < 0:
+            return _blocked(
+                f"'toxic_excluded_count' must be non-negative (got {excluded_count})",
+                f"{category}: record a non-negative integer count of excluded Toxic rows",
+            )
+        return _pass(f"NEU-ESC named labels (self-reported); toxic excluded count={excluded_count}")
+    # method in ("blind_audit", "author_confirmation"): raw 0/1/2 numeric mapping
+    mapping = fields.get("resulting_mapping")
+    if mapping is None:
+        return _unknown(
+            f"method '{method}' requires 'resulting_mapping' in raw 0/1/2 order",
+            f"{category}: record the canonical 3-class permutation for raw 0/1/2",
+        )
+    pinned = "raw order pinned as 0={}, 1={}, 2={}".format(*mapping)
+    sample = fields.get("audit_sample_size")
+    rate = fields.get("agreement_rate")
+    if sample is not None and sample <= 0:
         return _blocked(
             f"'audit_sample_size' {sample} must be a positive integer",
             f"{category}: record a positive audit sample size",
         )
+    if rate is not None and not 0.0 <= rate <= 1.0:
+        return _blocked(
+            f"'agreement_rate' {_clip(rate)} is outside the 0-1 range",
+            f"{category}: record the real agreement rate as a number between 0 and 1",
+        )
     if method == "blind_audit":
+        ref_err = _check_reference_text(
+            fields.get("verification_reference"),
+            field_name="verification_reference",
+            missing_msg="method 'blind_audit' requires 'verification_reference'",
+            action=f"{category}: reference the completed blind-audit file or log",
+        )
+        if ref_err is not None:
+            return ref_err
+        if sample is None or rate is None:
+            return _unknown(
+                "method 'blind_audit' requires 'audit_sample_size' and 'agreement_rate'",
+                f"{category}: record both audit_sample_size and agreement_rate",
+            )
         if sample < MIN_BLIND_AUDIT_SAMPLE:
             return _blocked(
                 f"blind audit sample size {sample} is below the required "
@@ -519,12 +884,12 @@ def _check_label_mapping_verification(
                 f"{LABEL_AGREEMENT_THRESHOLD}, or obtain author confirmation with a quote",
             )
         return _pass(
-            f"blind audit ({sample} lines, agreement {rate} >= {LABEL_AGREEMENT_THRESHOLD}); "
-            f"{pinned} (self-reported)"
+            f"blind audit ({sample} lines, rate {rate} >= {LABEL_AGREEMENT_THRESHOLD}; "
+            f"self-reported): {pinned}"
         )
     # method == "author_confirmation": a quote reference is mandatory.
     quote = fields.get("quote_reference", "")
-    if not isinstance(quote, str) or not quote.strip():
+    if not isinstance(quote, str) or not quote.strip() or _is_non_evidence_statement(quote):
         return _blocked(
             "method 'author_confirmation' requires 'quote_reference' (the author's "
             "quoted statement and where it was given)",
@@ -535,33 +900,50 @@ def _check_label_mapping_verification(
 
 @check("split_definition")
 def _check_split_definition(fields: dict[str, Any], _evidence: dict[str, Any]) -> CheckOutcome:
-    early = _evaluate_fields(fields, "split_definition")
+    category = "split_definition"
+    early = _evaluate_fields(fields, category)
     if early is not None:
         return early
-    category = "split_definition"
     for name in ("train_size", "validation_size", "test_size"):
         if fields[name] <= 0:
             return _blocked(
                 f"'{name}' must be a positive integer (got {fields[name]})",
                 f"{category}: record the expected size of each split as a positive integer",
             )
+    normalized_fps: dict[str, str] = {}
+    for split_name in ALL_SPLITS:
+        field_name = f"{split_name}_fingerprint"
+        raw_fp = fields[field_name].strip()
+        if not HEX64_RE.fullmatch(raw_fp):
+            return _blocked(
+                f"'{field_name}' must be a 64-character hexadecimal sha256 fingerprint",
+                f"{category}: record the 64-hex sha256 fingerprint for '{split_name}'",
+            )
+        normalized_fps[split_name] = raw_fp.lower()
+    if len(set(normalized_fps.values())) != len(ALL_SPLITS):
+        return _blocked(
+            "split fingerprints must be pairwise distinct across train, validation and test",
+            f"{category}: verify splits do not collapse or duplicate across train/val/test",
+        )
     warning = ""
     algorithm = fields["fingerprint_algorithm"].strip()
     if algorithm.lower() != "sha256":
         warning = (
             f"fingerprint algorithm '{_clip(algorithm)}' differs from the project standard sha256"
         )
+    policy = fields["split_policy"]
     return _pass(
-        "train/validation/test descriptors, sizes and fingerprint algorithm recorded", warning
+        f"splits ({policy}), sizes and distinct fingerprints recorded (self-reported)",
+        warning,
     )
 
 
 @check("leakage_preflight")
-def _check_leakage_preflight(fields: dict[str, Any], _evidence: dict[str, Any]) -> CheckOutcome:
-    early = _evaluate_fields(fields, "leakage_preflight")
+def _check_leakage_preflight(fields: dict[str, Any], evidence: dict[str, Any]) -> CheckOutcome:
+    category = "leakage_preflight"
+    early = _evaluate_fields(fields, category)
     if early is not None:
         return early
-    category = "leakage_preflight"
     if fields["exact_match_planned"] is False:
         return _blocked(
             "'exact_match_planned' is false - the exact-match preflight is mandatory (risk R-06)",
@@ -573,24 +955,47 @@ def _check_leakage_preflight(fields: dict[str, Any], _evidence: dict[str, Any]) 
             f"'near_duplicate_threshold' {_clip(threshold)} is outside the 0-1 range",
             f"{category}: record a near-duplicate similarity threshold between 0 and 1",
         )
+    if fields["preflight_synthetic_fixture"] is True:
+        return _blocked(
+            "'preflight_synthetic_fixture' is true - synthetic preflight reports cannot pass",
+            f"{category}: run 'vfi evaluate --preflight-only' on the real dataset splits",
+        )
+    if fields["exact_match_executed"] and fields["preflight_passed"] is False:
+        return _blocked(
+            "'preflight_passed' is false - leakage preflight failed",
+            f"{category}: resolve all leakage/contradiction findings until preflight passes",
+        )
     # Planning is not readiness: each check family must have been EXECUTED
     # with a recorded report reference before training can start.
     for family in ("exact_match", "near_duplicate"):
+        label = family.replace("_", "-")
         if fields[f"{family}_executed"] is False:
             return _unknown(
-                f"the {family.replace('_', '-')} preflight is planned but not executed - "
+                f"the {label} preflight is planned but not executed - "
                 "intentions are not execution evidence",
-                f"{category}: run the {family.replace('_', '-')} preflight and record its "
+                f"{category}: run the {label} preflight and record its "
                 "report reference before declaring training readiness",
             )
-        reference = fields.get(f"{family}_report_reference", "")
-        if not isinstance(reference, str) or not reference.strip():
-            return _unknown(
-                f"the {family.replace('_', '-')} preflight is marked executed but its "
-                "'report reference' is missing",
-                f"{category}: record where the executed {family.replace('_', '-')} "
-                "report lives (path or identifier)",
-            )
+        ref_err = _check_reference_text(
+            fields.get(f"{family}_report_reference"),
+            field_name=f"{family}_report_reference",
+            missing_msg=f"the {label} preflight is marked executed but its "
+            "'report reference' is missing",
+            action=f"{category}: record where the executed {label} report lives",
+        )
+        if ref_err is not None:
+            return ref_err
+    contradictions = fields["preflight_contradictions_count"]
+    if contradictions < 0:
+        return _blocked(
+            f"'preflight_contradictions_count' must not be negative (got {contradictions})",
+            f"{category}: record the non-negative count of cross-split contradictions",
+        )
+    if contradictions > 0:
+        return _blocked(
+            f"{contradictions} cross-split label contradiction(s) reported by preflight",
+            f"{category}: resolve every cross-split label contradiction before training",
+        )
     unresolved = fields["unresolved_conflicts"]
     if unresolved < 0:
         return _blocked(
@@ -604,30 +1009,73 @@ def _check_leakage_preflight(fields: dict[str, Any], _evidence: dict[str, Any]) 
             f"{category}: resolve or annotate every cross-split conflict, then set "
             "'unresolved_conflicts' to 0",
         )
+    preflight_sha = fields.get("preflight_report_sha256", "")
+    if not isinstance(preflight_sha, str) or not preflight_sha.strip():
+        return _unknown(
+            "executed preflight requires 'preflight_report_sha256'",
+            f"{category}: record the 64-hex sha256 hash of evaluation_preflight.json",
+        )
+    if not HEX64_RE.fullmatch(preflight_sha.strip()):
+        return _blocked(
+            "'preflight_report_sha256' must be a 64-character hexadecimal sha256 hash",
+            f"{category}: fix 'preflight_report_sha256' (64 hex characters)",
+        )
+    if _parse_timestamp(fields["preflight_created_at"]) is None:
+        return _blocked(
+            "'preflight_created_at' must be an ISO-8601 timestamp with a UTC offset",
+            f"{category}: copy created_at from evaluation_preflight.json",
+        )
+    expected_splits = _extract_split_fingerprints(evidence)
+    for field_name in ("preflight_split_fingerprints", "near_duplicate_split_fingerprints"):
+        fp_err = _validate_split_fingerprint_map(
+            fields[field_name],
+            expected=expected_splits,
+            required_splits=ALL_SPLITS,
+            forbidden_splits=(),
+            field_name=field_name,
+            action=f"{category}: match all three audit fingerprints to split_definition",
+        )
+        if fp_err is not None:
+            return fp_err
     method = _clip(fields["near_duplicate_method"])
     return _pass(
-        f"leakage preflights executed (self-reported): '{method}', threshold {threshold}, "
-        f"{unresolved} unresolved conflicts"
+        f"leakage preflight passed (self-reported): '{method}', threshold {threshold}, 0 conflicts"
     )
 
 
 @check("phase1_integrity")
-def _check_phase1_integrity(fields: dict[str, Any], _evidence: dict[str, Any]) -> CheckOutcome:
-    early = _evaluate_fields(fields, "phase1_integrity")
+def _check_phase1_integrity(fields: dict[str, Any], evidence: dict[str, Any]) -> CheckOutcome:
+    category = "phase1_integrity"
+    early = _evaluate_fields(fields, category)
     if early is not None:
         return early
-    category = "phase1_integrity"
     if not HEX40_RE.fullmatch(fields["phase1_head_sha"]):
         return _blocked(
             "'phase1_head_sha' must be a 40-character hexadecimal git SHA",
             f"{category}: fix 'phase1_head_sha' - record the exact Phase 1 head "
             "commit SHA (40 hex characters)",
         )
-    if fields["test_set_untouched"] is False:
+    if fields["test_excluded_from_fit_and_selection"] is False:
         return _blocked(
-            "'test_set_untouched' is false - the Phase 1 test split must remain untouched",
-            f"{category}: investigate the test-split violation before any Phase 2 work",
+            "'test_excluded_from_fit_and_selection' is false - "
+            "fit and model selection must exclude test",
+            f"{category}: investigate and enforce strict test exclusion from fit/selection",
         )
+    scope = fields["baseline_result_scope"]
+    if scope == "synthetic_fixture":
+        return _blocked(
+            "'baseline_result_scope' is 'synthetic_fixture' - "
+            "baseline runs on synthetic fixtures cannot satisfy readiness",
+            f"{category}: run the Phase 1 baseline on the real splits and record its scope",
+        )
+    ref_err = _check_reference_text(
+        fields["baseline_evidence_reference"],
+        field_name="baseline_evidence_reference",
+        missing_msg="baseline evidence reference is missing",
+        action=f"{category}: record the path to the baseline report artifact",
+    )
+    if ref_err is not None:
+        return ref_err
     baseline_hash = fields.get("baseline_evidence_sha256", "")
     if not isinstance(baseline_hash, str) or not baseline_hash.strip():
         return _unknown(
@@ -635,15 +1083,79 @@ def _check_phase1_integrity(fields: dict[str, Any], _evidence: dict[str, Any]) -
             "the reference is unconfirmed",
             f"{category}: record the sha256 hash of the referenced baseline metrics artifact",
         )
-    if not re.fullmatch(r"[0-9a-fA-F]{64}", baseline_hash.strip()):
+    if not HEX64_RE.fullmatch(baseline_hash.strip()):
         return _blocked(
             "'baseline_evidence_sha256' must be a 64-character hexadecimal sha256 hash",
             f"{category}: fix 'baseline_evidence_sha256' - record the artifact's sha256 "
             "(64 hex characters)",
         )
-    return _pass(
-        "Phase 1 head SHA valid; baseline artifact hashed; test set untouched (self-reported)"
+    trained_at = _parse_timestamp(fields["baseline_training_started_at"])
+    if trained_at is None:
+        return _blocked(
+            "'baseline_training_started_at' must be an ISO-8601 timestamp with a UTC offset",
+            f"{category}: copy training_started_at from training_report.json",
+        )
+    baseline_preflight_sha = fields["baseline_preflight_report_sha256"].strip()
+    if not HEX64_RE.fullmatch(baseline_preflight_sha):
+        return _blocked(
+            "'baseline_preflight_report_sha256' must be a 64-character hexadecimal sha256 hash",
+            f"{category}: record the digest of the pre-training evaluation_preflight.json",
+        )
+    preflight = evidence.get("leakage_preflight")
+    preflight = preflight if isinstance(preflight, dict) else {}
+    preflight_sha = preflight.get("preflight_report_sha256")
+    checked_at = _parse_timestamp(preflight.get("preflight_created_at"))
+    if (
+        not isinstance(preflight_sha, str)
+        or not HEX64_RE.fullmatch(preflight_sha.strip())
+        or (checked_at is None)
+    ):
+        return _unknown(
+            "a complete frozen preflight receipt is required to verify the baseline link",
+            f"{category}: complete the leakage_preflight evidence",
+        )
+    if baseline_preflight_sha.lower() != preflight_sha.strip().lower() or checked_at > trained_at:
+        return _blocked(
+            "the baseline must reference the same frozen preflight from before training",
+            f"{category}: compare the receipt digest and both timestamps against the saved reports",
+        )
+    expected_splits = _extract_split_fingerprints(evidence)
+    fp_err = _validate_split_fingerprint_map(
+        fields["baseline_split_fingerprints"],
+        expected=expected_splits,
+        required_splits=FIT_SPLITS,
+        forbidden_splits=("test",),
+        field_name="baseline_split_fingerprints",
+        action=f"{category}: record matching train/validation fingerprints (never test)",
     )
+    if fp_err is not None:
+        return fp_err
+    holdout_fp = fields.get("baseline_holdout_fingerprint", "")
+    has_holdout = isinstance(holdout_fp, str) and bool(holdout_fp.strip())
+    if scope == "declared_holdout":
+        if not has_holdout:
+            return _unknown(
+                "'baseline_result_scope' is 'declared_holdout' but "
+                "'baseline_holdout_fingerprint' is absent",
+                f"{category}: record the 64-hex test fingerprint evaluated by vfi evaluate",
+            )
+        if not HEX64_RE.fullmatch(holdout_fp.strip()):
+            return _blocked(
+                "'baseline_holdout_fingerprint' must be a 64-character hexadecimal sha256 hash",
+                f"{category}: fix 'baseline_holdout_fingerprint' (64 hex characters)",
+            )
+        if expected_splits is not None and holdout_fp.strip().lower() != expected_splits["test"]:
+            return _blocked(
+                "'baseline_holdout_fingerprint' does not match split_definition.test_fingerprint",
+                f"{category}: re-run baseline evaluation on the declared holdout split",
+            )
+    elif has_holdout:
+        return _blocked(
+            "'baseline_holdout_fingerprint' must be empty when "
+            "'baseline_result_scope' is 'train_validation'",
+            f"{category}: either clear 'baseline_holdout_fingerprint' or use 'declared_holdout'",
+        )
+    return _pass(f"Phase 1 head SHA valid; {scope} baseline hashed; test excluded (self-reported)")
 
 
 @check("model_checkpoint")
@@ -978,22 +1490,26 @@ def build_template() -> dict[str, Any]:
     inside the test suite, clearly marked as fabricated.
     """
     return {
-        "schema_version": 1,
+        "schema_version": SCHEMA_VERSION,
         "dataset_provenance": {
-            "source_url": "TODO: record the dataset's official source URL",
-            "license_statement": "TODO: quote the concrete license or agreement terms "
-            "from the authoritative source (do not declare a status)",
-            "access_condition_class": "author_agreement_signed",
-            "agreement_reference": "TODO: only after signing - record the agreement file "
-            "or the agreement email date; leave as TODO until it actually happens",
+            "dataset_id": "TODO: record the dataset identifier (e.g. feedback_v1)",
+            "dataset_version": "TODO: record the dataset version or snapshot identifier",
+            "dataset_adapter": "custom_jsonl",
+            "synthetic_fixture": False,
+            "access_condition_class": "owner_collected_human_approved",
+            "source_url": "",
+            "license_statement": "TODO: quote the concrete license or ownership terms "
+            "from the authoritative source (do not declare a bare status)",
+            "access_evidence_reference": "TODO: record the route-specific evidence "
+            "reference (consent/approval log, license file, click-accept date, or "
+            "signed agreement)",
         },
         "label_mapping_verification": {
-            "method": "blind_audit",
-            "audit_sample_size": 0,
-            "agreement_rate": 0.0,
-            "resulting_mapping": ["negative", "neutral", "positive"],
+            "method": "human_approved_canonical",
+            "verification_reference": "TODO: reference the mapping verification log or document",
         },
         "split_definition": {
+            "split_policy": "physical",
             "train_source": "TODO: describe the train split source",
             "validation_source": "TODO: describe the validation split source",
             "test_source": "TODO: describe the test split source",
@@ -1001,15 +1517,25 @@ def build_template() -> dict[str, Any]:
             "validation_size": 0,
             "test_size": 0,
             "fingerprint_algorithm": "sha256",
+            "train_fingerprint": "TODO: record the 64-hex sha256 fingerprint of train",
+            "validation_fingerprint": "TODO: record the 64-hex sha256 fingerprint of validation",
+            "test_fingerprint": "TODO: record the 64-hex sha256 fingerprint of test",
         },
         "leakage_preflight": {
             "exact_match_planned": True,
             "exact_match_executed": False,
             "exact_match_report_reference": "",
+            "preflight_passed": False,
+            "preflight_report_sha256": "",
+            "preflight_created_at": "",
+            "preflight_synthetic_fixture": False,
+            "preflight_contradictions_count": 0,
+            "preflight_split_fingerprints": {},
             "near_duplicate_method": "TODO: choose and record the near-duplicate method",
             "near_duplicate_threshold": 0.9,
             "near_duplicate_executed": False,
             "near_duplicate_report_reference": "",
+            "near_duplicate_split_fingerprints": {},
             "unresolved_conflicts": 0,
         },
         "phase1_integrity": {
@@ -1017,7 +1543,12 @@ def build_template() -> dict[str, Any]:
             "baseline_evidence_reference": "TODO: reference the produced baseline metrics "
             "artifact (only meaningful after a real run)",
             "baseline_evidence_sha256": "",
-            "test_set_untouched": True,
+            "baseline_preflight_report_sha256": "",
+            "baseline_training_started_at": "",
+            "baseline_result_scope": "train_validation",
+            "baseline_split_fingerprints": {},
+            "baseline_holdout_fingerprint": "",
+            "test_excluded_from_fit_and_selection": True,
         },
         "model_checkpoint": {
             "checkpoint_id": "TODO: record the checkpoint id you will actually use",
@@ -1140,10 +1671,23 @@ def main(argv: list[str] | None = None) -> int:
             f"unknown top-level key(s): {', '.join(_clip(key) for key in unknown_keys)}",
             as_json=args.json,
         )
-    version = payload.get("schema_version", SCHEMA_VERSION)
-    if isinstance(version, bool) or version != SCHEMA_VERSION:
+    if "schema_version" not in payload:
         return _fail_closed(
-            "unsupported 'schema_version' (this gate implements schema 1)", as_json=args.json
+            f"missing 'schema_version' (this gate requires schema {SCHEMA_VERSION})",
+            as_json=args.json,
+        )
+    version = payload["schema_version"]
+    if isinstance(version, bool) or version != SCHEMA_VERSION:
+        if not isinstance(version, bool) and version == 1:
+            return _fail_closed(
+                "legacy schema_version 1 is no longer supported - migrate dataset provenance, "
+                "label mapping, split fingerprints, preflight, and phase1 fields to schema "
+                f"{SCHEMA_VERSION} (see --schema)",
+                as_json=args.json,
+            )
+        return _fail_closed(
+            f"unsupported 'schema_version' (this gate implements schema {SCHEMA_VERSION})",
+            as_json=args.json,
         )
     try:
         report = evaluate_evidence(payload)

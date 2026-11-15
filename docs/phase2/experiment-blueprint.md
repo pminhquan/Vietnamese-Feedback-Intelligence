@@ -1,25 +1,21 @@
 # Phase 2 Experiment Blueprint
 
-Status: **design only**. Phase 2 is not authorized to start; the UIT-VSFC
-license is still blocked (see `docs/dataset-uit-vsfc.md` on the Phase 1
-branch). No dataset file, no fine-tuning run, and no metric value exists
-behind this document. Every runtime figure is labeled `[ESTIMATE]` with its
-reasoning. Written 2026-11-07 against Phase 1 commit `95f7687` and main
-`caddb4a`. Updated the same day (hardening pass): the work is organized into
-milestones — **M1 is the three-model pilot** defined in
-[pilot-experiment-plan.md](pilot-experiment-plan.md) (majority +
-TF-IDF+LogReg + one fixed-recipe PhoBERT fine-tune, seed 42, no search);
-everything else in this blueprint is M2+ escalation, pre-designed but not
-pilot scope.
+Status: **design only**. The released Phase 1 adapters support independent
+datasets. Phase 2 runs await a selected, authorized dataset, verified label
+semantics, a passing integrity preflight, actual classical baseline evidence,
+and the approved compute stack. Runtime figures marked `[ESTIMATE]` are
+planning scenarios. **M1 is the three-model pilot** described in
+[pilot-experiment-plan.md](pilot-experiment-plan.md): majority, TF-IDF+LogReg,
+and one pre-declared PhoBERT fine-tune (seed 42). Search and extra seeds belong
+to M2.
 
 ## 1. Research question
 
 Does fine-tuning a pretrained Vietnamese language model (PhoBERT-base)
-improve 3-class sentiment classification of student feedback — measured as
-validation macro-F1 and final test macro-F1 on the official UIT-VSFC splits —
-compared to the Phase 1 classical baselines, under a protocol where both
-model families share the same data, splits, label space, metric code, and
-selection rules?
+improve 3-class Vietnamese sentiment classification on the selected dataset,
+as measured by validation macro-F1 and final holdout macro-F1? Compare it
+with the majority and TF-IDF+LogReg baselines under identical records,
+split assignments, canonical labels, and metric code.
 
 Secondary questions, answered only if compute allows:
 
@@ -50,7 +46,7 @@ Notes:
   selected model, not a second architecture. XLM-R-base's declared role is
   **fallback only**: it replaces `phobert-base-ft` in M1 solely if PhoBERT
   is blocked (checkpoint/license verification fails, or segmentation
-  determinism cannot be shown — `pilot-experiment-plan.md` §13b), as a
+  determinism cannot be shown — `pilot-experiment-plan.md` §13(b)), as a
   documented deviation with owner approval.
 - PhoBERT checkpoint facts (verified 2026-11-07 from the Hugging Face card
   `vinai/phobert-base` and `config.json`): ~135M parameters, hidden 768,
@@ -58,105 +54,56 @@ Notes:
   license tag `license:mit`. Re-verify the license tag at Phase 2 kickoff and
   record it in the reproducibility metadata.
 
-## 3. Dataset acquisition and integrity checks
+## 3. Dataset selection and integrity checks
 
-### 3.1 Acquisition
+### 3.1 Select one eligible dataset
 
-Unchanged from Phase 1: the owner emails `kietnv@uit.edu.vn`, signs the
-corpus user agreement, receives the official `train` / `validation` / `test`
-file pairs, and places them under `data/raw/uit_vsfc/<split>/{sentences,sentiments}.txt`
-exactly as `data/README.md` specifies. Files are never committed. The signed
-agreement's terms (especially any prohibition on uploading the corpus to
-third-party services) are recorded in `reports/` **before** any cloud-GPU
-scenario is considered — see `experiment-matrix.md`.
+Use a locally held dataset with documented permission for the planned use.
+The default Phase 1 path uses human-approved custom JSONL. An authorized
+local five-level CSV or NEU-ESC CSV is also eligible after verifying label
+semantics and recording any collapse or exclusion policy. NEU-ESC access
+remains subject to its provider's gate; Toxic stays distinct and requires
+an explicit policy for a three-class comparison. See the
+[adapter layouts](../../data/README.md) and
+[Phase 1 experiment protocol](../experiment-protocol.md).
 
-Expected corpus scale for planning only: ≈16k sentences total; the official
-split is train 11,426 / validation 1,583 / test 3,166 per the authors'
-`uitnlp` card `[VERIFIED FACT]`, fetched 2026-11-07 — the authoritative
-numbers remain whatever the delivered files contain, recorded at the
-integrity gate.
+UIT-VSFC remains an optional, agreement-gated adapter and is excluded from
+the current plan. Its published scale (roughly 16k rows, with 11,426 train,
+1,583 validation and 3,166 test per the authors' card as read on 2026-11-07)
+is historical context used in compute estimates. Use actual effective
+counts and measurements for the selected dataset.
 
-### 3.2 Integrity gate (must pass before any model sees the data)
+### 3.2 Integrity gate before fitting
 
-Run in order; each step is recorded in a committed report (aggregate
-statistics only; raw text stays out of committed reports — conditional on
-the G3 hardening, see `risk-register.md` R-05/R-08):
+1. Freeze the dataset identity, version, adapter, verified label mapping,
+   applicable exclusions, and physically separate holdout. Check that
+   collection groups do not leak across splits. Use group-aware splitting
+   where the source has repeated or related examples.
+2. Run `vfi prepare-data` on the effective train and validation sources. Run
+   `vfi evaluate --preflight-only` before fitting to check all three splits
+   and record source provenance and effective fingerprints. Retain the
+   passing `evaluation_preflight.json`. Use the receipt to verify final
+   evaluation provenance and keep its test data out of fit and selection.
+3. Resolve exact cross-split matches and contradictory labels before fitting.
+   Treat bounded near-duplicate signals as a review queue; related texts
+   or known collection groups still need separate local review. Keep raw
+   feedback and row-level evidence local.
+4. Fit and select both real Phase 1 baselines on the same approved snapshot.
+   Retain their real validation reports, artifact hashes, and training
+   provenance before starting PhoBERT. Keep test scoring closed until all
+   final configurations are frozen. A dataset, mapping, or holdout change
+   invalidates the comparison and requires a fresh preflight and baselines.
 
-1. **Layout and line alignment.** Each split directory contains exactly
-   `sentences.txt` and `sentiments.txt`; line counts match per split. The
-   existing loader (`vfi.data.loading.load_split`) fails loudly on
-   misalignment — this failure is the check, and its absence is confirmed by
-   a clean `vfi prepare-data`.
-2. **File and record fingerprints.** sha256 of each raw file, plus the
-   order-sensitive record fingerprint from `vfi.data.validation.fingerprint`
-   per split. These identifiers are copied into every experiment's
-   reproducibility metadata and into the matrix when Phase 2 runs.
-3. **Label-semantics verification** — see 3.3. Hard gate: no training until
-   it passes.
-4. **Schema and distribution.** `vfi.data.validation.validate_records`
-   (non-empty normalized text, known labels), per-split class distribution
-   over the canonical labels, and duplicates report
-   (`find_duplicates` — reported, not dropped, per Phase 1 policy).
-5. **Cross-split leakage.** `find_leakage` exact-match check across all
-   three splits; any hit is reported and resolved (documented decision)
-   before training. Near-duplicate leakage remains out of scope (Phase 1
-   limitation), documented as such.
-6. **Freeze.** Once 1-5 pass, the dataset version is frozen as
-   "UIT-VSFC v1.0, fingerprints `<...>`" and every subsequent artifact
-   references it. Any change to the raw files invalidates all fingerprints
-   and reopens the gate.
+### 3.3 Verify the selected dataset's label semantics
 
-### 3.3 Label-semantics verification of the raw 0/1/2 mapping
-
-Phase 1's loader hard-codes `RAW_SENTIMENT_TO_LABEL = {0: "positive",
-1: "negative", 2: "neutral"}`, sourced from the SEACrowd loader's
-`ClassLabel` declaration — a secondary-source inference, explicitly flagged
-for verification in `docs/dataset-uit-vsfc.md`. Because every metric in both
-phases depends on this mapping, it is verified **before** trusting it:
-
-**Hardening-pass update (2026-11-07):** the full evidence trail is in
-[label-semantics-evidence.md](label-semantics-evidence.md). The two public
-loaders consume the identical raw files with contradictory `ClassLabel`
-orders, so exactly one mislabels every row. The authors' own HF org is
-consistent across three independent artifacts (card prose, embedded loader
-script, served parquet features) — all say 0=negative, 1=neutral,
-2=positive — while SEACrowd's reorder has no verification trail. The
-**planning prior is therefore H1 (0=negative, 1=neutral, 2=positive)**; if
-the audit confirms H1, Phase 1's loader mapping must be corrected (a Phase 1
-branch change) before any real-data run. The gate below is unchanged: the
-prior is not trusted for training until author confirmation + blind audit
-settle it (G2). The audit's pre-registered hypotheses and pass/fail criteria
-are H1/H2 in `label-semantics-evidence.md` §7; the pilot-level blocking
-procedure is `pilot-experiment-plan.md` §2.4.
-
-1. **Authoritative documentation.** The corpus package delivered after
-   signing is checked for label-encoding documentation (README or agreement
-   material). Whatever it states is recorded verbatim-or-paraphrased in the
-   report.
-2. **Manual audit.** Stratify by raw label value: sample 15 lines per raw
-   value (0/1/2) per split — 135 lines total, or 45 per class. Two readers
-   (the owner and one independent reader) judge each line's polarity from
-   the text alone, blind to the integer. Compare their judgments to the
-   declared mapping.
-3. **Acceptance rule.** For each raw value: ≥ 90% of sampled lines judged
-   with the mapped polarity, and both readers individually ≥ 85%. If any
-   class falls below 80% or shows a systematic inversion (e.g., raw `0`
-   lines consistently negative), the mapping is **not trusted**: loading is
-   stopped, `RAW_SENTIMENT_TO_LABEL` is corrected against the author's
-   documentation, and the audit is repeated before anything trains.
-4. **Distribution corroboration.** The per-split class proportions under the
-   declared mapping are sanity-checked against any distribution the author
-   publishes (the 2018 KSE paper reports sentiment stats; inter-annotator
-   agreement > 91%). A positive-majority profile is expected for student
-   feedback; a nonsensical profile triggers investigation, not silent
-   acceptance.
-5. **Audit trail.** The committed report records: sample design, both
-   readers' per-class agreement rates, the decision, and at most short
-   truncated fragments as evidence. No full student sentences.
-
-Because Phase 1 has never run on real data, this gate is a shared
-prerequisite for both phases; passing it unblocks Phase 1's real-data runs
-too.
+Document the source label definitions and mapping to negative, neutral and
+positive. Check their meaning against source documentation and a local
+human review where needed. For owner-created records, retain annotation
+provenance and approval. A permutation of labels can preserve aggregate
+scores while changing class meanings, so scores cannot verify the mapping.
+The disputed UIT-VSFC raw 0/1/2 order is documented in
+[label-semantics-evidence.md](label-semantics-evidence.md). Follow the
+explicit mapping gate if that optional adapter ever becomes authorized.
 
 ## 4. Preprocessing pipelines (documented, not hidden)
 
@@ -166,48 +113,44 @@ violation, not a convenience.
 
 | Step | Classical (`majority`, `tfidf-logreg`) | Transformer (`phobert-base-ft`, frozen, optional second model) |
 | ---- | -------------------------------------- | -------------------------------------------------------------- |
-| Raw input | Official split files, one sentence per line | Same files, same lines |
+| Raw input | Selected adapter's frozen records | Same texts, labels, and split order |
 | Normalization | `normalize_text`: Unicode NFC + whitespace collapse | Same `normalize_text` first (shared, minimal) |
-| Tokenization | TF-IDF analyzer (whitespace words or char_wb), `lowercase=True` inside the vectorizer | Word segmentation, then PhoBERT BPE WordPiece tokenizer |
+| Tokenization | TF-IDF analyzer (whitespace words or char_wb), `lowercase=True` inside the vectorizer | Word segmentation, then PhoBERT's BPE tokenizer |
 | Word segmentation | Not applied (whitespace tokens) | **Mandatory**: PhoBERT was pre-trained on word-segmented Vietnamese (underscore-joined syllables, e.g. `sinh_viên`); unsegmented input measurably degrades it |
 | Case handling | Lowercased by the vectorizer | Preserved (tokenizer is case-preserving) |
-| Sequence length | Unbounded (sparse features) | `max_seq_length=256` (PhoBERT's model maximum, `tokenization-design.md` §3), truncation from the right; the segmented train-split token-length distribution (p99) and per-split truncation rate are measured and recorded — a meaningful tail is a documented limitation, not silent truncation |
-| Fitted on our data | TF-IDF vocabulary + IDF, train split only | Nothing (segmenter and tokenizer are pre-trained externally; their models were not trained on UIT-VSFC) |
+| Sequence length | Unbounded (sparse features) | `max_seq_length=256` (PhoBERT's model maximum, `tokenization-design.md` §3), truncation from the right; measure train token lengths (p99) and train/validation truncation before selection; record holdout truncation only in final evaluation — a meaningful tail is a documented limitation, not silent truncation |
+| Fitted on our data | TF-IDF vocabulary + IDF, train split only | No preprocessing fit on this project's data. Segmenter and tokenizer are external, fixed components. |
 
 Segmentation tooling: **VnCoreNLP RDRSegmenter** (`py_vncorenlp`) — the
 VnCoreNLP tool + pre-trained models are **GPLv3** (`LICENSE.md`, verified
 2026-11-07; `tokenization-design.md` §4): acceptable for local research use,
 re-examine before any Phase 3 serving. `underthesea` is the license-safe
 backup — **Apache-2.0** on the main repo (older releases were GPL-3.0, so
-the pinned version's license is recorded). The
-segmentation step's runtime on ≈16k short sentences is minutes on CPU
-`[ESTIMATE]` and is recorded once in the report.
+the pinned version's license is recorded). The historical ≈16k-row size
+suggests minutes of CPU work `[ESTIMATE]`. Measure the selected dataset.
 
-Segmentation is applied identically to every split, once, and the segmented
-split files are treated as derived data: rebuilt only from frozen raw files,
-never hand-edited, and fingerprinted (hash of the segmented line sequence per
-split) so experiments can cite them.
+Apply the same pinned segmenter to each split when that stage is allowed
+to read it. Fit and selection use only train and validation caches. Build
+the holdout cache in the dedicated final evaluation path once selection is
+frozen. Derived outputs are rebuilt from the frozen source, kept local,
+and fingerprinted.
 
 ## 5. Split discipline
 
-Identical to Phase 1, restated because Phase 2 adds new ways to violate it:
+1. **Effective train** is used for all fitting, including the TF-IDF vocabulary,
+   classifier weights, fine-tuning updates, and any frozen-encoder head.
+2. **Effective validation** is used for hyperparameter selection, early
+   stopping, checkpoint choice, and error analysis.
+3. **Test holdout** is accessed by the evaluation path only. Its preflight
+   verifies integrity and fingerprints before fitting. Matching provenance
+   is required at final evaluation. Score each frozen configuration once per
+   seed; existing paired test predictions may support descriptive post-hoc
+   statistics, with no retraining or reselection in response.
 
-1. **Official train** split: fitting only — TF-IDF vocabulary, logistic
-   regression weights, the fine-tuning updates (all epochs), the frozen head.
-2. **Official validation** split: hyperparameter selection, early stopping,
-   checkpoint choice, error analysis. Never used for fitting; never merged
-   with train.
-3. **Official test** split: evaluated only after model selection is finalized
-   and frozen. Never used for tuning, early stopping, checkpoint choice, or
-   error-analysis-driven fixes. Each final configuration (per seed) is
-   evaluated once; the resulting test predictions may support descriptive
-   post-hoc statistics (e.g. McNemar's test, `evaluation-protocol.md` §6)
-   but may not trigger retraining or reselection.
-
-The `use_official_splits: false` fallback from Phase 1 stays available for
-validation-file unavailability, but Phase 2 fine-tuning requires the official
-splits — the fallback split must not become the default just because it is
-convenient.
+A Phase 1 grouped validation fallback is allowed when there is a separate
+test holdout. Freeze and reuse its effective train and validation
+assignments for all arms, including Phase 2. Without a usable holdout,
+report validation evidence only and stop before the benchmark pilot.
 
 ## 6. Seed policy
 
@@ -238,8 +181,10 @@ Rules:
 **M1 uses none of this section**: the pilot runs the single pre-declared
 configuration of `pilot-experiment-plan.md` §5 (LR 3e-5, effective batch 32
 via micro-batch 8 × accumulation 4, max length 256, ≤ 5 epochs, seed 42) —
-zero search. This section stays pre-designed as the M2 escalation and runs
-only after M1 is reported.
+zero search. This section describes the M2 escalation. Run it only after
+owner approval and protect model selection from any M1 test scores already
+released. If those scores informed a decision, any new benchmark requires a
+fresh holdout and matching baselines.
 
 ### 7.1 The search
 
@@ -265,8 +210,8 @@ runs** of the winning configuration (§6).
 Validation macro-F1 (same metric code, `zero_division=0`) is computed at the
 end of every epoch. Training stops after 2 consecutive evaluations without
 improvement; the best-validation checkpoint is kept. With ≤ 5 epochs this
-bounds every run at 5 validation passes — affordable at ≈1.6k validation
-sentences.
+bounds every run at 5 validation passes. The historical ≈1.6k-row validation
+set served only as a planning example.
 
 ### 7.3 Why the grid stays small
 
@@ -312,10 +257,11 @@ All selection uses validation macro-F1 with the same metric code as Phase 1;
 
 ## 9. Fairness rules for the classical-vs-deep comparison
 
-1. **Same splits**: official train/validation/test for every model. No
-   model gets a different train set, resampling, or augmentation.
-2. **Same label space**: canonical `negative/neutral/positive` end-to-end;
-   the raw 0/1/2 mapping is verified once (§3.3) and shared by all loaders.
+1. **Same snapshot**: use identical effective fit and selection records,
+   holdout fingerprint, and adapter provenance. Changes to examples,
+   split policy, resampling, or augmentation require a new comparison.
+2. **Same label space**: use canonical `negative/neutral/positive`.
+   Verify the selected adapter's mapping once (§3.3) and bind it to all runs.
 3. **Same metric implementation**: every number in the comparison tables is
    produced by `vfi.evaluation.metrics.compute_metrics` — one code path, one
    `zero_division=0` policy, one confusion-matrix convention.
@@ -364,21 +310,21 @@ load-bearing facts:
   compute-infeasible on CPU; the frozen-encoder variant (encode once, fit a
   logistic head) is the CPU-feasible fallback.
 - **Cloud GPU** changes hours, not science: the protocol is identical; the
-  corpus agreement's hosting terms gate whether the dataset may be uploaded
-  at all.
+  selected dataset's terms and explicit owner approval determine whether
+  any third-party upload is allowed.
 
 ## 11. Risks and fallbacks
 
 | Risk | Trigger | Fallback |
 | ---- | ------- | -------- |
-| Dataset license stays blocked | No signed agreement | Nothing runs; the matrix keeps everything `BLOCKED(dataset license)`; Phase 2 remains design-only (current state) |
-| Label mapping fails the audit | §3.3 acceptance rule fails | Stop; correct mapping against author documentation; re-audit; no training until it passes |
-| Segmentation determinism cannot be shown | Double-segmentation fingerprints differ or golden-file test fails | Halt the PhoBERT arm; debug/pin the tool version; if unresolvable, `phobert-base-ft` = `BLOCKED(segmentation)` and the XLM-R fallback (§2) becomes available with owner approval (`pilot-experiment-plan.md` §13b) |
-| VRAM OOM at micro-batch 8 | CUDA OOM on RTX 3060 6 GB | Pre-declared ladder: 8×4 → 4×8 → 2×16 → 1×32 (effective batch stays 32, recorded deviation); OOM even at micro-batch 1 = hardware-failure verdict, fallback per `pilot-experiment-plan.md` §13c |
+| Data or holdout unavailable | No authorized, integrity-checked benchmark snapshot | Continue readiness while the selected dataset and holdout are prepared. |
+| Label mapping fails the audit | Source label meanings remain uncertain (§3.3) | Resolve them locally and rerun preflight before fitting either model family. |
+| Segmentation determinism cannot be shown | Double-segmentation fingerprints differ or golden-file test fails | Halt the PhoBERT arm; debug/pin the tool version; if unresolvable, `phobert-base-ft` = `BLOCKED(segmentation)` and the XLM-R fallback (§2) becomes available with owner approval (`pilot-experiment-plan.md` §13(b)) |
+| VRAM OOM at micro-batch 8 | CUDA OOM on RTX 3060 6 GB | Pre-declared ladder: 8×4 → 4×8 → 2×16 → 1×32 (effective batch stays 32, recorded deviation); OOM even at micro-batch 1 = hardware-failure verdict, fallback per `pilot-experiment-plan.md` §13(c) |
 | fp16 loss instability | Non-finite loss / NaN validation | Switch the affected run to fp32, record the deviation, re-run that candidate |
 | Neutral class collapse in validation | Neutral recall ≈ 0 across searched LRs | Planned class-weighted candidate joins the search on validation (§7.1), before any test run |
 | Fine-tuning infeasible on local GPU | Sustained hardware failure / VRAM below expectation | Frozen-encoder variant as the reported deep model; full fine-tune stays `BLOCKED(compute)`; claims scoped accordingly |
-| Cloud hosting prohibited by corpus agreement | Agreement terms forbid third-party upload | Cloud cells become `BLOCKED(license)`; local GPU remains the only compute path |
+| Cloud hosting prohibited by dataset terms | Dataset terms forbid third-party upload | Cloud cells become `BLOCKED(license)`; local GPU remains the only compute path |
 
 ## 12. Phase 1 protocol items that Phase 2 changes or extends
 

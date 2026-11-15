@@ -1,5 +1,11 @@
 # Handoff to Phase 1 Maintainer (Codex-anti) — Findings for the Phase 1 Branch
 
+Release update (2026-11-15): this is the original read-only audit, retained as
+historical evidence. Phase 1 shipped in PR #1 at
+`db9b921791832337ac0536ba5b1ae03f664ba2d0` with the integrated adapter,
+privacy, leakage, provenance and structural safeguards. See the
+[current dependencies](phase1-dependencies.md).
+
 Prepared by: Red Team Agent E (Security & Privacy), Phase 2 readiness program, 2026-11-07.
 Copy-ready handoff. Every claim is evidence-labeled; file:line references are against Phase 1
 commit `95f7687` (`phase1/classical-ml-baselines`, PR #1 head

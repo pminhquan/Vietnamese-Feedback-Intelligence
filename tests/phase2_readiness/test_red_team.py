@@ -1,64 +1,45 @@
-"""Red-team tests for the hardware probe (Phase 2 readiness hardening pass).
+"""Red-team tests for the hardware probe and Phase 2 readiness gate.
 
-Every ``xfail`` test here encodes the DESIRED privacy contract for a hole that
-was ACTUALLY demonstrated against the current working-tree probe on Windows 11
-/ Python 3.12 (2026-11-07). Nothing in this file is speculative: each hole test
-asserts the safe behavior, fails against the current code, and carries the
-exact crafted input that reproduced the bug. When the probe is fixed, these
-tests XPASS (strict marker) and must be flipped into plain regression tests.
-
-Repo-internal writes are exercised against a temporary fixture repository (a
-copy of the tool under ``tmp_path`` with a ``.git`` entry), never against the
-real clone.
-
-Reproduced holes covered (each marked xfail, strict):
-1. ``\\?\\``-prefixed ``--output``: ``Path.resolve()`` yields a drive-relative
-   path, the refusal check misses, and the details file is written INSIDE the
-   (fixture) repository via the per-drive working directory.
-2. Trailing-space directory component: ``resolve()`` canonicalizes the
-   component but returns it with a ``\\\\?\\`` prefix, so the parents
-   comparison against the plain repo root misses and the file lands inside
-   the (fixture) repository.
-3. UNC ``\\\\localhost\\<drive>$\\...`` spelling: ``resolve()`` falls back to a
-   literal drive-rooted path, so ``_repo_internal_refusal`` misses (checked at
-   the API level; the end-to-end write lands outside the repo and was
-   verified manually).
-4. Environment spoofing (LOGNAME/USER/LNAME/USERNAME/USERPROFILE): the guard
-   derives "sensitive" from the live environment, so a spoofed runner sees
-   the real username echoed unredacted on the ``--output`` stderr line.
-5. argparse ``unrecognized arguments``: argv is echoed verbatim to stderr
-   before any guard runs, contradicting the documented guarantee that error
-   strings containing known sensitive values are replaced by a category
-   message.
-Two further tests pin behavior that was verified COVERED or safe (case
-variants, ``..`` traversal, trailing-dot files, forward slashes; and the fact
-that ``COMPUTERNAME`` does not influence ``platform.node()``) so it cannot
-regress silently.
+Hardware probe cases verify path-canonicalization, env-spoof, and argparse
+privacy guarantees. The appended readiness gate section reproduces historical
+false accepts (synthetic fixtures, checkbox flags, unlinked fingerprints,
+leaked test splits, stale schema omission) and historical false rejects
+(legitimate non-UIT-VSFC dataset routes and declared holdout/preflight test
+access).
 """
 
 import getpass
 import importlib.util
+import io
+import json
 import shutil
 import subprocess
+import sys
+from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 TOOL_PATH = Path(__file__).resolve().parents[2] / "tools" / "phase2_readiness" / "hardware_probe.py"
+GATE_TOOL_PATH = (
+    Path(__file__).resolve().parents[2] / "tools" / "phase2_readiness" / "readiness_gate.py"
+)
 FAKE_SMI_CSV = "NVIDIA GeForce RTX 3060 Laptop GPU, 6144, 617.42, 8.6\n"
 
 
 def _load_tool(path: Path, name: str) -> Any:
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:  # pragma: no cover - defensive
-        raise RuntimeError(f"cannot load hardware probe module from {path}")
+        raise RuntimeError(f"cannot load module from {path}")
     module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
 
 
 hardware_probe = _load_tool(TOOL_PATH, "vfi_hardware_probe_redteam")
+readiness_gate = _load_tool(GATE_TOOL_PATH, "vfi_readiness_gate_redteam")
 
 
 def _fake_which(_binary: str) -> str:
@@ -254,3 +235,327 @@ def test_covered_path_crafts_are_still_refused() -> None:
         resolved = hardware_probe._resolve_output(Path(crafted))
         refusal = hardware_probe._repo_internal_refusal(resolved)
         assert refusal is not None, f"crafted path was NOT refused: {crafted!r} -> {resolved!r}"
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 readiness gate red-team regressions (false accepts & false rejects)
+# ---------------------------------------------------------------------------
+
+_RT_TRAIN_FP = "a1" * 32
+_RT_VAL_FP = "b2" * 32
+_RT_TEST_FP = "c3" * 32
+
+
+def _gate_base_uit_vsfc_payload() -> dict[str, Any]:
+    return {
+        "schema_version": 2,
+        "dataset_provenance": {
+            "dataset_id": "uit_vsfc_redteam",
+            "dataset_version": "1.0.0",
+            "dataset_adapter": "uit_vsfc",
+            "synthetic_fixture": False,
+            "access_condition_class": "author_agreement_signed",
+            "source_url": "https://example.org/uit-vsfc",
+            "license_statement": "signed academic license terms from UIT NLP group",
+            "access_evidence_reference": "signed_agreement_2026-11-10.pdf",
+        },
+        "label_mapping_verification": {
+            "method": "blind_audit",
+            "verification_reference": "reports/uit_blind_audit_120.json",
+            "audit_sample_size": 120,
+            "agreement_rate": 0.95,
+            "resulting_mapping": ["negative", "neutral", "positive"],
+        },
+        "split_definition": {
+            "split_policy": "physical",
+            "train_source": "uit-vsfc/train.txt",
+            "validation_source": "uit-vsfc/dev.txt",
+            "test_source": "uit-vsfc/test.txt",
+            "train_size": 11426,
+            "validation_size": 1583,
+            "test_size": 3166,
+            "fingerprint_algorithm": "sha256",
+            "train_fingerprint": _RT_TRAIN_FP,
+            "validation_fingerprint": _RT_VAL_FP,
+            "test_fingerprint": _RT_TEST_FP,
+        },
+        "leakage_preflight": {
+            "exact_match_planned": True,
+            "exact_match_executed": True,
+            "exact_match_report_reference": "reports/evaluation_preflight.json",
+            "preflight_passed": True,
+            "preflight_report_sha256": "d4" * 32,
+            "preflight_created_at": "2026-11-02T08:00:00+00:00",
+            "preflight_synthetic_fixture": False,
+            "preflight_contradictions_count": 0,
+            "preflight_split_fingerprints": {
+                "train": _RT_TRAIN_FP,
+                "validation": _RT_VAL_FP,
+                "test": _RT_TEST_FP,
+            },
+            "near_duplicate_method": "char_ngram_jaccard",
+            "near_duplicate_threshold": 0.9,
+            "near_duplicate_executed": True,
+            "near_duplicate_report_reference": "reports/near_duplicate_audit.json",
+            "near_duplicate_split_fingerprints": {
+                "train": _RT_TRAIN_FP,
+                "validation": _RT_VAL_FP,
+                "test": _RT_TEST_FP,
+            },
+            "unresolved_conflicts": 0,
+        },
+        "phase1_integrity": {
+            "phase1_head_sha": "db9b9210" * 5,
+            "baseline_evidence_reference": "reports/training_report.json",
+            "baseline_evidence_sha256": "e5" * 32,
+            "baseline_preflight_report_sha256": "d4" * 32,
+            "baseline_training_started_at": "2026-11-02T08:30:00+00:00",
+            "baseline_result_scope": "train_validation",
+            "baseline_split_fingerprints": {
+                "train": _RT_TRAIN_FP,
+                "validation": _RT_VAL_FP,
+            },
+            "baseline_holdout_fingerprint": "",
+            "test_excluded_from_fit_and_selection": True,
+        },
+        "model_checkpoint": {
+            "checkpoint_id": "vinai/phobert-base-v2",
+            "revision_sha": "12" * 20,
+            "license_name": "MIT",
+            "weights_format": "safetensors",
+            "checksum_recorded": True,
+            "checksum_sha256": "f6" * 32,
+        },
+        "tokenization_contract": {
+            "segmenter_name": "underthesea",
+            "segmenter_version": "6.8.4",
+            "determinism_evidence_reference": "reports/seg_check.json",
+            "max_length": 256,
+            "truncation_side": "right",
+        },
+        "dependency_plan": {
+            "pinned_versions": {
+                "torch": "2.5.1",
+                "transformers": "4.46.2",
+                "segmenter": "6.8.4",
+            },
+            "lockfile_reference": "locks/phase2.lock",
+        },
+        "compute_feasibility": {
+            "device": "cuda",
+            "vram_gb": 6,
+            "oom_recovery_plan": "batch 16 -> 8 -> grad accum 2 -> cpu fallback",
+        },
+        "artifact_privacy_controls": {
+            "gitignore_patterns": ["*.bin", "*.pt", "*.safetensors", "data/raw/"],
+            "reports_pii_policy": "aggregate metrics and anonymized indices only",
+            "verified_against_repository": True,
+        },
+        "owner_approval": {
+            "approver": "project-owner",
+            "approval_date": "2026-11-10",
+            "scope_statement": "Phase 2 M1 readiness verification",
+        },
+    }
+
+
+def _gate_run(tmp_path: Path, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    path = tmp_path / "gate_evidence.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        code = readiness_gate.main(["--input", str(path), "--json"])
+    return code, json.loads(buf.getvalue())
+
+
+def test_redteam_false_accept_synthetic_smoke_payload_is_blocked(tmp_path: Path) -> None:
+    """Smoke-test fixtures or synthetic dataset IDs must NEVER pass readiness."""
+    for mutator in (
+        lambda p: p["dataset_provenance"].update({"synthetic_fixture": True}),
+        lambda p: p["dataset_provenance"].update({"dataset_id": "synthetic_smoke_fixture"}),
+        lambda p: p["leakage_preflight"].update({"preflight_synthetic_fixture": True}),
+        lambda p: p["phase1_integrity"].update({"baseline_result_scope": "synthetic_fixture"}),
+    ):
+        payload = _gate_base_uit_vsfc_payload()
+        mutator(payload)
+        code, summary = _gate_run(tmp_path, payload)
+        assert code == 1
+        assert summary["overall"] == "blocked"
+
+
+def test_redteam_false_accept_rights_confirmed_checkbox_is_rejected(tmp_path: Path) -> None:
+    """Bool rights_confirmed checkbox or bare status word must never pass provenance."""
+    payload = _gate_base_uit_vsfc_payload()
+    payload["dataset_provenance"]["rights_confirmed"] = True
+    code, summary = _gate_run(tmp_path, payload)
+    assert code == 1
+    assert summary["categories"]["dataset_provenance"]["verdict"] == "blocked"
+
+    payload = _gate_base_uit_vsfc_payload()
+    payload["dataset_provenance"]["access_evidence_reference"] = "rights_confirmed"
+    code, summary = _gate_run(tmp_path, payload)
+    assert code == 1
+    assert summary["categories"]["dataset_provenance"]["verdict"] == "unknown"
+
+
+def test_redteam_false_accept_uit_vsfc_bypass_routes_are_blocked(tmp_path: Path) -> None:
+    """UIT-VSFC cannot claim licensed_public/gated access or non-0/1/2 mapping."""
+    payload = _gate_base_uit_vsfc_payload()
+    payload["dataset_provenance"]["access_condition_class"] = "licensed_public"
+    code, summary = _gate_run(tmp_path, payload)
+    assert code == 1
+    assert summary["categories"]["dataset_provenance"]["verdict"] == "blocked"
+
+    payload = _gate_base_uit_vsfc_payload()
+    payload["label_mapping_verification"] = {
+        "method": "human_approved_canonical",
+        "verification_reference": "skipped 0/1/2 check",
+    }
+    code, summary = _gate_run(tmp_path, payload)
+    assert code == 1
+    assert summary["categories"]["label_mapping_verification"]["verdict"] == "blocked"
+
+
+def test_redteam_false_accept_neu_esc_toxic_keep_or_unjustified_fails(tmp_path: Path) -> None:
+    """NEU-ESC with toxic_policy='keep' or missing exclusion justification cannot pass."""
+    payload = _gate_base_uit_vsfc_payload()
+    payload["dataset_provenance"].update(
+        {
+            "dataset_id": "neu_esc_corpus",
+            "dataset_adapter": "neu_esc",
+            "access_condition_class": "gated_click_accept",
+            "access_evidence_reference": "HF gated click-accept 2026-11-10",
+        }
+    )
+    payload["label_mapping_verification"] = {
+        "method": "neu_esc_named_labels",
+        "verification_reference": "docs/phase2/label-semantics-evidence.md#neu-esc",
+        "toxic_policy": "keep",
+        "toxic_justification": "trying to keep toxic class during 3-class sentiment fit",
+        "toxic_excluded_count": 0,
+    }
+    code, summary = _gate_run(tmp_path, payload)
+    assert code == 1
+    assert summary["categories"]["label_mapping_verification"]["verdict"] == "blocked"
+
+
+def test_redteam_false_accept_legacy_preflight_without_test_or_mismatch_fails(
+    tmp_path: Path,
+) -> None:
+    """Legacy data_report-style preflight omitting 'test' or using stale splits must not pass."""
+    payload = _gate_base_uit_vsfc_payload()
+    del payload["leakage_preflight"]["preflight_split_fingerprints"]["test"]
+    code, summary = _gate_run(tmp_path, payload)
+    assert code == 1
+    assert summary["categories"]["leakage_preflight"]["verdict"] == "unknown"
+
+    payload = _gate_base_uit_vsfc_payload()
+    payload["leakage_preflight"]["preflight_split_fingerprints"]["test"] = "99" * 32
+    code, summary = _gate_run(tmp_path, payload)
+    assert code == 1
+    assert summary["categories"]["leakage_preflight"]["verdict"] == "blocked"
+
+
+def test_redteam_false_accept_leaked_test_or_mismatched_holdout_is_blocked(tmp_path: Path) -> None:
+    """Putting test in fit fingerprints or mismatched holdout fingerprint fails closed."""
+    payload = _gate_base_uit_vsfc_payload()
+    payload["phase1_integrity"]["baseline_split_fingerprints"]["test"] = _RT_TEST_FP
+    code, summary = _gate_run(tmp_path, payload)
+    assert code == 1
+    assert summary["categories"]["phase1_integrity"]["verdict"] == "blocked"
+
+    payload = _gate_base_uit_vsfc_payload()
+    payload["phase1_integrity"]["baseline_result_scope"] = "declared_holdout"
+    payload["phase1_integrity"]["baseline_holdout_fingerprint"] = "00" * 32
+    code, summary = _gate_run(tmp_path, payload)
+    assert code == 1
+    assert summary["categories"]["phase1_integrity"]["verdict"] == "blocked"
+
+
+def test_redteam_false_accept_missing_or_v1_schema_version_exits_two(tmp_path: Path) -> None:
+    """Schema version omission must never silently default to schema v2."""
+    payload = _gate_base_uit_vsfc_payload()
+    del payload["schema_version"]
+    code, summary = _gate_run(tmp_path, payload)
+    assert code == 2
+    assert summary["overall"] == "blocked"
+
+    payload = _gate_base_uit_vsfc_payload()
+    payload["schema_version"] = 1
+    code, summary = _gate_run(tmp_path, payload)
+    assert code == 2
+    assert "schema_version 1" in summary["input_error"]
+
+
+def test_redteam_false_reject_custom_jsonl_owner_collected_passes(tmp_path: Path) -> None:
+    """Owner-collected custom_jsonl without source_url or UIT-VSFC agreement must PASS."""
+    payload = _gate_base_uit_vsfc_payload()
+    payload["dataset_provenance"] = {
+        "dataset_id": "owner_course_feedback_2026",
+        "dataset_version": "1.0.0",
+        "dataset_adapter": "custom_jsonl",
+        "synthetic_fixture": False,
+        "access_condition_class": "owner_collected_human_approved",
+        "source_url": "",
+        "license_statement": "internal course survey data collected by owner with consent",
+        "access_evidence_reference": "data/manifests/owner_consent_and_review_2026.json",
+    }
+    payload["label_mapping_verification"] = {
+        "method": "human_approved_canonical",
+        "verification_reference": "data/manifests/human_annotator_approval.json",
+    }
+    code, summary = _gate_run(tmp_path, payload)
+    assert code == 0, summary
+    assert summary["overall"] == "pass"
+
+
+def test_redteam_false_reject_five_level_public_and_neu_esc_and_holdout_pass(
+    tmp_path: Path,
+) -> None:
+    """Licensed public, gated NEU-ESC + toxic exclude, and preflight/holdout test access pass."""
+    # Licensed public 5-level CSV with grouped_validation and declared_holdout evaluating test.
+    pub = _gate_base_uit_vsfc_payload()
+    pub["dataset_provenance"] = {
+        "dataset_id": "viet_students_five_level",
+        "dataset_version": "2025.1",
+        "dataset_adapter": "five_level_csv",
+        "synthetic_fixture": False,
+        "access_condition_class": "licensed_public",
+        "source_url": "https://example.org/datasets/five-level",
+        "license_statement": "Apache-2.0 open dataset license",
+        "access_evidence_reference": "licenses/five_level_apache2.txt",
+    }
+    pub["label_mapping_verification"] = {
+        "method": "ordinal_five_to_three",
+        "verification_reference": "docs/phase2/label-semantics-evidence.md#five-level-ordinal",
+    }
+    pub["split_definition"]["split_policy"] = "grouped_validation"
+    pub["phase1_integrity"]["baseline_result_scope"] = "declared_holdout"
+    pub["phase1_integrity"]["baseline_evidence_reference"] = "reports/eval_holdout.json"
+    pub["phase1_integrity"]["baseline_holdout_fingerprint"] = _RT_TEST_FP
+    code, summary = _gate_run(tmp_path, pub)
+    assert code == 0, summary
+    assert summary["overall"] == "pass"
+
+    # Gated NEU-ESC click-accept with auditable toxic_policy='exclude'.
+    neu = _gate_base_uit_vsfc_payload()
+    neu["dataset_provenance"] = {
+        "dataset_id": "neu_esc_2024",
+        "dataset_version": "2024-09",
+        "dataset_adapter": "neu_esc",
+        "synthetic_fixture": False,
+        "access_condition_class": "gated_click_accept",
+        "source_url": "https://huggingface.co/datasets/example/neu-esc",
+        "license_statement": "gated research-only terms accepted on dataset card",
+        "access_evidence_reference": "HF gated click-accept 2026-11-10 under owner profile",
+    }
+    neu["label_mapping_verification"] = {
+        "method": "neu_esc_named_labels",
+        "verification_reference": "docs/phase2/label-semantics-evidence.md#neu-esc",
+        "toxic_policy": "exclude",
+        "toxic_justification": "Toxic is separate moderation axis outside 3-class sentiment",
+        "toxic_excluded_count": 37,
+    }
+    code, summary = _gate_run(tmp_path, neu)
+    assert code == 0, summary
+    assert summary["overall"] == "pass"

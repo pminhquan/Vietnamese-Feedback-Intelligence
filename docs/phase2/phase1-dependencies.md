@@ -4,8 +4,12 @@ Prepared by: Research Agent E (Security, Privacy & Failure-Mode Review), Phase 2
 Date: 2026-11-07.
 Reviewed Phase 1 ref: `95f7687735c785367fa0a6f9b1efbf0e284aac7f` (head of
 `phase1/classical-ml-baselines`, Draft PR #1: OPEN, MERGEABLE, CI green — verified via
-`gh pr view 1`). All file:line citations refer to that commit. `main` (`caddb4a`) contains only
-repository bootstrap metadata; all Phase 1 code lives in PR #1.
+`gh pr view 1` at the time). Historical file:line citations refer to that commit.
+
+Current baseline as of 2026-11-15: released `main` at
+`db9b921791832337ac0536ba5b1ae03f664ba2d0`. The released implementation
+supersedes the historical findings below where the integrated code already
+addresses them.
 
 Companion document: `risk-register.md` (Phase 2 threat model).
 
@@ -17,13 +21,13 @@ Companion document: `risk-register.md` (Phase 2 threat model).
 | ----- | -------- | ----------- |
 | `Record` dataclass, `SPLITS` | `loading.py:23, 39-45` | The universal data currency; Phase 2 dataset builders must consume `Record`s, not raw files. |
 | `normalize_text` (NFC + whitespace) | `loading.py:48-59` | Reuse unchanged as the shared normalization for fingerprinting/leakage comparisons; it is deliberately Vietnamese-safe (no lowercasing/diacritic stripping). |
-| `load_split` / `load_dataset` | `loading.py:62-111` | Line-aligned loader with loud failures (missing files, misalignment, empty text, unknown label with line number). Phase 2 keeps this as the only ingestion path — do NOT add `load_dataset("SEACrowd/uit_vsfc")`. |
-| `RAW_SENTIMENT_TO_LABEL` / `CANONICAL_LABELS` / `LABEL_TO_ID` | `loading.py:26-32` | Single source of truth for the raw→canonical mapping and canonical id space (negative=0, neutral=1, positive=2). Phase 2 id tables must derive from these. |
+| `load_dataset_for_config` | [`adapters.py`](../../src/vfi/data/adapters.py) | Use the selected local adapter. Default calls open train and validation only. Evaluation requests the holdout explicitly. |
+| `CANONICAL_LABELS` / `LABEL_TO_ID` | [`loading.py`](../../src/vfi/data/loading.py) | Derive canonical IDs here. The adapter supplies verified source-specific mapping and policy provenance. |
 | `validate_records` | `validation.py:16-29` | Pre-training schema gate; call on every split before building a HF `Dataset`. |
 | `class_distribution` | `validation.py:62-65` | Sanity reporting per split. |
-| `fingerprint` | `validation.py:68-80` | Order-sensitive sha256 of (text, label) pairs; reuse as the dataset version identifier inside Phase 2 run metadata (Phase 1 already does this in `cli.py:117`). |
-| `find_duplicates` / `find_leakage` | `validation.py:32-59` | Reuse as the exact-match baseline; Phase 2 must ADD near-duplicate detection on top (see §2.3 and risk R-06). |
-| `stratified_split` | `splitting.py:20-47` | Only relevant to the `use_official_splits: false` fallback; needs a dedup/group-aware upgrade before reuse (issue #7). |
+| `fingerprint` | [`validation.py`](../../src/vfi/data/validation.py) | Order-sensitive SHA-256 of effective text and label pairs. Retain it alongside adapter identity and source digests. |
+| `find_duplicates` / `find_leakage` | `validation.py` | Exact-match and contradiction checks. The bounded Phase 1 similarity sample is advisory. |
+| `stratified_split` | [`splitting.py`](../../src/vfi/data/splitting.py) | Seeded grouped fallback. Identical normalized texts stay together. Review other grouping units before freezing real splits. |
 
 ### 1.2 Evaluation layer — reuse directly
 
@@ -46,14 +50,14 @@ Companion document: `risk-register.md` (Phase 2 threat model).
 | argparse subcommand pattern, exit codes (0/1/2), `_fail`, JSON-to-stdout | `cli.py:37-47, 255-291` | Phase 2 adds subcommands (e.g. `vfi train-transformer`, `vfi evaluate-transformer`) following the same shape. |
 | Report-writing convention: JSON to `reports/artifacts/` (gitignored), committed prose to `reports/` | `cli.py:96-99, 169-184`; `reports/README.md` | Phase 2 evaluation reports follow the same split; per-example error analysis stays in the gitignored dir (risk R-05). |
 | Metadata sidecar provenance | `baseline.py:226-243` | `build_training_metadata` pattern (created_at, config, config_hash, dataset fingerprints, library versions, seed) extends naturally with torch/transformers versions, checkpoint revision SHA, and segmentation tool version (risks R-01/R-10/R-12). |
-| "test untouched" reporting | `cli.py:116, 171-176` | Keep `test_untouched` in every Phase 2 training report; it is the audit hook for risk R-09. |
+| Preflight and training provenance | [`cli.py`](../../src/vfi/cli.py) | Bind the dataset and test fingerprint to a passing pre-fit receipt. Keep test out of fitting and selection. |
 
 ### 1.5 Verification gate and repo hygiene — reuse, then harden
 
 | Asset | Location | Reuse notes |
 | ----- | -------- | ----------- |
-| `scripts/verify.py` (ruff + format + pytest + structural checks) | `verify.py:1-91` | The gate stays the definition of done (`AGENTS.md:33-34`); needs the extensions in issues #9-11 before Phase 2 artifact types exist. |
-| `.gitignore` coverage, `data/README.md` layout, docs discipline | `.gitignore:1-43`; `data/README.md` | Layout and "never commit data" rules carry over; needs `*.bin`/`*.pt`/etc. additions (issue #9). |
+| `scripts/verify.py` (ruff + format + pytest + structural checks) | [`verify.py`](../../scripts/verify.py) | Verify both suites and tracked-file guards. The CI workflow also runs the structural gate. |
+| `.gitignore` coverage and data layout | [`.gitignore`](../../.gitignore), [data layout](../../data/README.md) | Phase 1 now covers torch-era weight extensions, local datasets, reports and secret files. |
 | Honesty rules / AGENTS boundaries | `docs/experiment-protocol.md:73-79`; `AGENTS.md:8-34` | Binding on all Phase 2 agents; note rule 8 (`AGENTS.md:29-30`) currently *forbids* PyTorch/Transformers in Phase 1 work — the Phase 2 stack lands on Phase 2 branches only. |
 
 ## 2. What Phase 2 must CHANGE or ADD
@@ -79,18 +83,19 @@ Companion document: `risk-register.md` (Phase 2 threat model).
 
 ### 2.3 Data pipeline additions
 
-- Near-duplicate audit tooling (n-gram/MinHash/embedding Jaccard) producing a per-split-pair
-  rate report — prerequisite before trusting any Phase 2 test number (risk R-06).
-- Dedup/group-aware fallback split (fix issue #7 first).
-- Dataset provenance field in run metadata: source channel + agreement date (risk R-04).
+- Record a near-duplicate audit across all declared split pairs before fitting.
+  The bounded Phase 1 train/validation sample does not cover this requirement.
+- Use the same frozen grouped splits and mapping as the actual Phase 1 baselines.
+- Retain adapter provenance and dataset-specific access references. An agreement
+  reference applies only where the chosen source requires one.
 
 ### 2.4 Artifact types (new)
 
 - HF-style checkpoint directories (`config.json`, `model.safetensors`, tokenizer files) under
   `models/<model_id>/` following the existing `save_model` layout (`baseline.py:160-183`) —
   but serialized with safetensors, not joblib/pickle (risks R-01/R-03).
-- Gitignore and verify-gate extensions BEFORE the first checkpoint exists on disk (issues
-  #9-11; risk R-08).
+- Confirm new outputs remain covered by the released structural guard before
+  any checkpoint is acquired (risk R-08).
 - Test-set evaluation ledger (`reports/artifacts/test_ledger.jsonl`) — new, enforces risk R-09.
 
 ### 2.5 Metrics (no change)
@@ -98,11 +103,13 @@ Companion document: `risk-register.md` (Phase 2 threat model).
 - `compute_metrics` is the contract; only latency parameters may need tuning. No new metric
   should displace macro-F1 for model selection.
 
-## 3. Confirmed Phase 1 issues (read-only review findings for Codex-anti)
+## 3. Historical findings from the pre-release Phase 1 review
 
 Severity scale: Critical / High / Medium / Low (same qualitative model as the risk register).
 None of these are correctness bugs in Phase 1's own scope; they are gaps that matter for
-Phase 2. Listed in priority order.
+Phase 2. Listed in priority order at the time of the review. The released
+code adds checksum and config validation, privacy-safe reports, grouped
+splitting, explicit UIT-VSFC mapping, split provenance and Git/CI protection.
 
 | # | Location | Severity | Issue | Why it matters | Suggested direction (Codex-anti owns the change) |
 | --- | -------- | -------- | ----- | -------------- | ------------------------------------------------ |
@@ -133,12 +140,11 @@ Phase 2. Listed in priority order.
 
 ## 4. Blocking items for Phase 2 start
 
-1. **Dataset access (hard blocker):** signed UIT-VSFC user agreement and corpus receipt, then
-   label-mapping verification against the author's README (issue #9). No real training can
-   legitimately start before this (`AGENTS.md:20-23`, `docs/dataset-uit-vsfc.md:72-81`).
-2. **Artifact-format hardening before first HF download:** gitignore + verify gate + CI
-   extensions (issues #6, #7, #13) — cheap, contained diffs that must precede any multi-GB
-   checkpoint on disk (risk R-08).
+1. **Dataset access and real baseline evidence:** select an authorized source,
+   document mapping or human annotation, create physical splits, pass preflight,
+   and fit both classical baselines before beginning the deep arm.
+2. **Artifact-format checklist:** confirm the planned paths match the released
+   ignore, structural and CI protections before a checkpoint is acquired.
 3. **Checkpoint policy decision:** which pretrained checkpoint(s), pinned revision, safetensors
    availability (risk R-01); owner approval required.
 4. **GPU feasibility assessment** before committing to a fine-tuning plan (`docs/roadmap.md:24-25`).

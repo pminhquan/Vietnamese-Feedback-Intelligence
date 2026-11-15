@@ -1,7 +1,8 @@
 # 00 — Executive Decision: Phase 2 Readiness
 
-Program date: 2026-11-07. Program type: research & readiness only — **no
-fine-tuning, no dataset downloads, no weight downloads** were performed.
+Research snapshot: 2026-11-07. Release reconciliation: 2026-11-15.
+Phase 2 remains a readiness proposal. Real experiments require approved data,
+verified baseline evidence and explicit owner approval.
 
 Verified starting checkpoints (live `git ls-remote` + `gh pr view` at program
 start, 2026-11-07):
@@ -12,29 +13,34 @@ start, 2026-11-07):
 - Phase 1 was used as a READ-ONLY reference (`git show <sha>:<path>`); no
   Phase 1 file was modified anywhere by this program.
 
+Phase 1 is now released at `db9b921791832337ac0536ba5b1ae03f664ba2d0`.
+Its adapters accept authorized local data and owner-collected JSONL after human
+annotation and approval. See [the released protocol](../experiment-protocol.md)
+and [CI on main](https://github.com/pminhquan/Vietnamese-Feedback-Intelligence/actions/runs/43682522477).
+
 ---
 
 ## Decision: CONDITIONAL GO
 
-Phase 2 may proceed **conditionally**. Everything that does not require the
-corpus is GO now. Any training or real-data experiment is NO-GO until every
-gate below is closed by the owner.
+Proceed with planning and the first authorized classical baseline. Fine-tuning
+requires completed evidence for the chosen dataset, both Phase 1 baselines, and
+the remaining operational gates. No source has been selected for a real run.
 
 | # | Gate (all mandatory before fine-tuning) | Status | Owner action |
 | - | --------------------------------------- | ------ | ------------ |
-| G1 | UIT-VSFC usage authorization: email `kietnv@uit.edu.vn`, sign the corpus user agreement, receive corpus | **OPEN** | Email + sign (template in `dataset-acquisition-plan.md`) |
-| G2 | Label semantics settled: the two public sources DISAGREE on the raw integer order (see Conflicts below); must be settled by the author's answer + a blind audit of delivered label files vs sentence sentiment | **OPEN** | Ask author in the G1 email; run the audit from `experiment-blueprint.md` on receipt |
-| G3 | Artifact/ignore hardening for torch-era files (`*.bin`, `*.pt`, `*.ckpt`, `.env` tracked-file checks) before the FIRST HF checkpoint download | **OPEN** | Approve the hardening patch (owned by Phase 1 maintainer; see `risk-register.md` R-08) |
+| G1 | Verify and record the selected source's permitted access and use, or the collection and consent basis for owner-collected data | **OPEN** | Follow [dataset acquisition](dataset-acquisition-plan.md) |
+| G2 | Verify the source-specific mapping and annotations, freeze physical splits, and pass preflight | **OPEN** | Use the Phase 1 protocol on the selected source before either baseline is fitted for comparison |
+| G3 | Confirm checkpoint license, pinned revision, safe serialization, checksum and repository hygiene | **PARTIAL** | Git/CI protections released in Phase 1. Checkpoint evidence is pending. |
 | G4 | Pinned dependency stack for Phase 2 (torch/transformers/segmenter) in a Phase 2 branch | **OPEN** | Approve after G1–G3 |
-| G5 | Owner completes the preprocessing/tokenization learning tasks | **OPEN** | `owner-learning-roadmap.md` weeks 1–2 |
+| G5 | Owner completes the preprocessing and tokenization learning tasks and approves the pilot scope | **OPEN** | [Learning plan](owner-learning-roadmap.md) weeks 1–2 and recorded approval |
 
 ## What can begin NOW (GO)
 
 - Model study and tokenizer experiments on synthetic text (no weights needed
   to study docs; first real download only after G3).
 - Segmentation toolchain decision and local smoke tests on sample sentences
-  (underthesea is Apache-2.0 — the license-safe default; VnCoreNLP is GPLv3 —
-  verify yourself in `tokenization-design.md`).
+  using the documented pilot candidate and fallback. See
+  [tokenization design](tokenization-design.md).
 - Hardware preparation: install CUDA-enabled torch in a dedicated venv and
   verify `torch.cuda.is_available()` (GPU measured: RTX 3060 Laptop 6 GB —
   sufficient for the planned scope, see `compute-feasibility.md`).
@@ -46,24 +52,47 @@ gate below is closed by the owner.
 - Downloading UIT-VSFC from any mirror while the license is unverified — the
   author org's own HF card states "Licensing Information: Unknown" and the
   official channel requires a signed agreement.
-- Any fine-tuning, any real-data metric, any leaderboard-style claim.
+- Fine-tuning until the evidence and approval gates pass. No real metric is
+  available until an authorized run actually produces it.
+
+## Record release readiness evidence
+
+Generate a fresh template from the branch, then fill its fields from the
+actual dataset decision and saved Phase 1 artifacts. Keep evidence and
+reports under an ignored local directory.
+
+```powershell
+New-Item -ItemType Directory -Force reports/artifacts | Out-Null
+python tools/phase2_readiness/readiness_gate.py --schema |
+    Set-Content -Encoding utf8 reports/artifacts/phase2-evidence.json
+python tools/phase2_readiness/readiness_gate.py --input reports/artifacts/phase2-evidence.json --json
+```
+
+The template starts incomplete. Evidence must identify the dataset and
+adapter, the source's access terms or collection permission, and the reviewed
+label interpretation. Record the effective split fingerprints and the
+`created_at` timestamp and SHA-256 of the passing `evaluation_preflight.json`.
+Record a separate near-duplicate audit covering all three splits. Save the
+frozen preflight digest with the baseline evidence and record
+`training_started_at` from `training_report.json`. Confirm that the dataset
+identity and label definition match across the baseline and preflight
+reports. Validation results from both baselines are sufficient while the
+test remains sealed. The gate checks declared evidence for completeness
+and consistency. The owner reviews the cited material and approves the
+PhoBERT pilot.
 
 ## Answers to the twelve readiness questions
 
-1. **Which dataset can we use?** No PERMISSION-REQUIRED dataset is usable
-   today — the primary target **UIT-VSFC** (best domain/label/schema fit)
-   still awaits its signed author agreement. Best USABLE NOW alternative
-   (subject to its stated access gate: HF login + click-accept) is
-   **NEU-ESC** (Apache-2.0, education domain, 33k items) with documented
-   caveats: 4-class schema, 69% neutral skew, no published annotation
-   protocol. Status classes and details: `dataset-landscape.md`,
-   `dataset-license-matrix.md`.
-2. **Can we obtain UIT-VSFC under author conditions?** Yes, via email to
-   `kietnv@uit.edu.vn` and signing the corpus user agreement; the condition
-   was re-verified unchanged on 2026-11-07 (`dataset-acquisition-plan.md`).
-3. **Suitable alternatives?** Ranked table in `dataset-license-matrix.md`;
-   NEU-ESC (usable now), UIT-ViSFD and SA-VLSP2016 (permission required),
-   NTC-SCV and two scraped/unknown-provenance mirrors REJECTED.
+1. **Which dataset can we use?** Prefer independent feedback with documented
+   collection rights, human annotation and approval, or an external dataset
+   with verified terms and a fitting label schema.
+2. **What is the UIT-VSFC status?** Optional adapter only. The owner chose
+   to pursue independent data. Any future use of UIT-VSFC still requires its
+   signed agreement and verified mapping of the actual files.
+3. **Suitable alternatives?** NEU-ESC is a candidate after Hugging Face
+   acceptance and a review of the source terms. Toxic requires an explicit
+   policy and never becomes negative. See [dataset research](dataset-landscape.md)
+   and [access evidence](dataset-license-matrix.md).
 4. **Which pretrained models?** First candidate `vinai/phobert-base` (135M,
    MIT on card, sentence-classification compatible); fallback
    `xlm-roberta-base` (279M, MIT, no segmentation needed). Deferred:
@@ -84,14 +113,15 @@ gate below is closed by the owner.
    notebooks — but they force corpus upload (privacy/license risk; the user
    agreement may forbid third-party hosting), (c) paid GPU VM only on
    explicit triggers. `compute-feasibility.md` §environment comparison.
-9. **Fair classical-vs-deep comparison?** Same splits, same canonical labels,
-   same metric code, documented preprocessing differences, plus an optional
+9. **Fair classical-vs-deep comparison?** Same dataset version, verified
+   mapping, split fingerprints and holdout as the real Phase 1 baselines.
+   Use the same metric code, document preprocessing, and consider an optional
    segmented-text TF-IDF variant so the baseline gets the same segmentation
    benefit. Fairness rules: `experiment-blueprint.md` §8.
-10. **Leakage/test-tuning prevention?** Integrity gate + blind label audit +
-    exact-match AND near-duplicate checks (Phase 1 only does exact-match —
-    confirmed risk R-06), validation-only selection, single-touch test
-    evaluation with a written ledger. `evaluation-protocol.md`, `risk-register.md`.
+10. **Leakage/test-tuning prevention?** Explicit integrity preflight before
+    fitting, exact and near-duplicate audits, validation-only selection, and
+    one final scoring per locked configuration. The Phase 1 near-duplicate
+    sample alone does not cover all split pairs. See [evaluation](evaluation-protocol.md).
 11. **Reproducibility?** Per-run metadata schema (git SHA, seeds per stage,
     torch/transformers/CUDA/segmenter versions, config hash, artifact
     hashes); Phase 1's sklearn-only record is insufficient and must be
@@ -106,12 +136,9 @@ gate below is closed by the owner.
    `ClassLabel(names=["positive","negative","neutral"])` → 0=positive, while
    the author org's own card `uitnlp/vietnamese_students_feedback` states
    "`sentiment`: values 0 (negative), 1 (neutral) and 2 (positive)". Both
-   sides verified 2026-11-07. **Resolution:** no trust in either mapping for
-   real training; settle via the author (question pre-written in the G1
-   email) AND a blind audit of the delivered files (G2). Phase 1's
-   documented mapping follows SEACrowd and is now flagged
-   [UNVERIFIED AGAINST AUTHOR SOURCE] — reported to the Phase 1 maintainer,
-   not edited here.
+   sides recorded 2026-11-07. The mapping of original files remains unresolved.
+   The released optional adapter requires rights, an explicit mapping and
+   evidence. Independent adapters use their own verified label semantics.
 
    Hardening pass 2026-11-07 (`label-semantics-evidence.md`): both mirrors
    consume the identical nine Google Drive files with unmodified integer
@@ -121,14 +148,13 @@ gate below is closed by the owner.
    carries three mutually consistent artifacts (card prose, migrated loader
    `ClassLabel`, served parquet) favoring 0=negative. That evidential
    balance is recorded as a planning prior only; the audit hypotheses are
-   pre-registered (§7 of that document) and resolution stays with the
-   author's answer + the blind audit (gate G2).
+   pre-registered (§7 of that document) for any future authorized use.
 2. **Segmenter licenses.** Agent outputs disagreed. Primary-source check by
    the orchestrator: VnCoreNLP `LICENSE.md` = **GPLv3**;
-   `underthesea` `LICENSE` (main) = **Apache-2.0**. Resolution: underthesea
-   is the license-safe default; VnCoreNLP remains acceptable for local
-   research use with the GPL implication documented (relevant later for
-   Phase 3 serving).
+   `underthesea` `LICENSE` (main) = **Apache-2.0**. The pilot proposes
+   VnCoreNLP for fidelity to PhoBERT pretraining and records underthesea as
+   a separately pinned fallback. Recheck distribution implications before
+   any later serving work.
 3. **Split sizes.** Now [VERIFIED FACT] from the author org card:
    train 11,426 / validation 1,583 / test 3,166 (total 16,175).
 4. **"PhoBERT paper reports UIT-VSFC F1"** — FALSE per the paper itself
@@ -137,12 +163,14 @@ gate below is closed by the owner.
 
 ## Smallest scientifically valuable experiment (when G1–G5 close)
 
-Fine-tune `vinai/phobert-base` ONCE — seed 42, pre-declared recipe (LR 3e-5,
+First fit majority and TF-IDF + Logistic Regression on authorized, preflighted
+data and freeze their artifacts and validation records. Then fine-tune
+`vinai/phobert-base` once — seed 42, pre-declared recipe (LR 3e-5,
 effective batch 32 via micro-batch 8 × grad-accum 4, OOM ladder
 8×4→4×8→2×16→1×32 pre-declared — no batch size is guaranteed before
 measurement; ≤5 epochs, early stopping on validation macro-F1) — then
-evaluate it, `majority`, and the Phase 1 TF-IDF+LogReg winner on validation,
-then once each on test (3 test evaluations), with identical metric code and
+select using validation, then evaluate all three locked configurations once
+each on the same test holdout, with identical metric code and
 full provenance. Implementation contract: `pilot-experiment-plan.md`. Claims
 phrased as single-run ("in this run"). Full matrix with
 search and multi-seed variance only if the owner wants stronger claims
@@ -157,7 +185,8 @@ search and multi-seed variance only if the owner wants stronger claims
    only); test evaluated exactly once per final configuration.
 4. Reproducibility record complete for every run.
 5. Error analysis with indexed examples (no raw student text).
-6. Comparison report states per-seed variance and restricted claims.
+6. Comparison report scopes claims to the matched benchmark and reports
+   per-seed variation only if multiple seeds were run.
 7. Owner learning checklist items independently signed off by the owner.
 
 ## Top risks (see `risk-register.md` for the full register)
@@ -166,22 +195,22 @@ search and multi-seed variance only if the owner wants stronger claims
 | -- | ---- | -------- |
 | R-01 | Untrusted checkpoint loading (pickle `pytorch_model.bin`; use safetensors + pinned revision + checksum) | High |
 | R-06 | Near-duplicate cross-split leakage invisible to exact-match checks | High |
-| R-08 | Accidental commit of weights/raw data (gitignore/verify gaps for torch-era files) | High |
-| R-07 | Label mapping ambiguity (now a VERIFIED two-source conflict) | High |
+| R-08 | Accidental commit of weights/raw data despite released path guards | High |
+| R-07 | Label mapping ambiguity, including the historical UIT-VSFC conflict | High |
 | R-04 | License enforcement pressure once data is local | High |
 
 ## Evidence table (decision → primary source)
 
 | Decision | Primary source (fetched 2026-11-07) |
 | -------- | ----------------------------------- |
-| G1 requirement | https://github.com/kietnv/VietnameseDatasets (agreement clause, verbatim) |
+| Optional UIT-VSFC access requirement | https://github.com/kietnv/VietnameseDatasets (agreement clause) |
 | License "Unknown" on both mirrors | https://huggingface.co/datasets/uitnlp/vietnamese_students_feedback (card, "Licensing Information: Unknown"); https://huggingface.co/datasets/SEACrowd/uit_vsfc (`Licenses.UNKNOWN`) |
 | Label-order conflict | Same uitnlp card "Data Fields" section vs https://huggingface.co/datasets/SEACrowd/uit_vsfc/raw/main/uit_vsfc.py (ClassLabel order) |
 | Split sizes | uitnlp card "Data Splits" table (11,426/1,583/3,166) |
 | PhoBERT choice + segmentation contract | https://huggingface.co/vinai/phobert-base (card: "INPUT TEXT MUST BE ALREADY WORD-SEGMENTED!", MIT) + https://arxiv.org/abs/2003.00744 |
 | VnCoreNLP GPLv3 / underthesea Apache-2.0 | https://github.com/vncorenlp/VnCoreNLP/blob/master/LICENSE.md ; https://github.com/undertheseanlp/underthesea (LICENSE) |
 | Hardware sufficiency | `tools/phase2_readiness/hardware_probe.py` measured output, 2026-11-07 (sanitized) |
-| NEU-ESC as usable-now alternative | https://huggingface.co/datasets/ (see `dataset-landscape.md` §NEU-ESC for exact gated link and license tag) |
+| NEU-ESC as a gated candidate | [Research and access caveats](dataset-landscape.md) |
 
 ## Program transparency
 
@@ -197,7 +226,7 @@ sources and resolved the conflicts above. No dataset, weight, or secret was
 downloaded; no training was run; no Phase 1 file was modified; PR #1 was not
 touched.
 
-## Hardening pass (2026-11-07, same PR, second program round)
+## Historical hardening pass (2026-11-07)
 
 An independent hardening round reviewed and extended this package:
 
@@ -219,7 +248,7 @@ An independent hardening round reviewed and extended this package:
   template (TODO placeholders and not-done flags; fed back through `--input`
   it exits 1 with overall "blocked") — a schema example only, never readiness
   evidence. Owner flow: fill the package with real evidence, run the gate,
-  and treat PASS as a precondition for any training run.
+  and require PASS before the PhoBERT pilot.
 - **Pilot plan finalized.** `pilot-experiment-plan.md` is the
   implementation-level M1 contract: exactly three models (majority,
   TF-IDF+LogReg, one PhoBERT), no hyperparameter search, seed 42, label

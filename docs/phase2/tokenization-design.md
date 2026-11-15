@@ -1,8 +1,8 @@
 # Phase 2 Tokenization & Preprocessing Design
 
 Status: research note (Phase 2 readiness only). Phase 2 fine-tuning is **not** authorized yet.
-Facts about the Phase 1 pipeline below were read from the Phase 1 source at commit
-`95f7687735c785367fa0a6f9b1efbf0e284aac7f` (`git show`, read-only). Model-side facts are labeled
+The preprocessing contract is checked against released Phase 1 at
+`db9b921791832337ac0536ba5b1ae03f664ba2d0`. Model-side facts are labeled
 per the evidence discipline; see [model-landscape.md](model-landscape.md) for the model cards.
 
 Evidence labels: **[VERIFIED FACT]**, **[ESTIMATE]**, **[ASSUMPTION]**, **[UNVERIFIED]**.
@@ -20,10 +20,10 @@ The Phase 1 classical pipeline processes **raw whitespace text**:
   splits on whitespace/punctuation at fit/transform time. [VERIFIED FACT]
 - The whole model is one sklearn `Pipeline`, so training-time and inference-time preprocessing
   cannot drift by construction. [VERIFIED FACT]
-- Labels: canonical space `negative=0, neutral=1, positive=2`; raw UIT-VSFC integers
-  (assumed `0=positive, 1=negative, 2=neutral` per the SEACrowd declaration — **UNRESOLVED**,
-  see [label-semantics-evidence.md](label-semantics-evidence.md)) are remapped once at load
-  time. [VERIFIED FACT for the load-time remap]
+- Labels: canonical space `negative=0, neutral=1, positive=2`. The selected
+  adapter normalizes source labels under its verified mapping. The optional
+  UIT-VSFC adapter requires explicit evidence for the unresolved raw encoding.
+  See [the historical label evidence](label-semantics-evidence.md).
 
 So Phase 1 "tokenization" = whitespace/punctuation n-gram splitting on NFC-normalized raw text —
 **no word segmentation anywhere in Phase 1**.
@@ -99,7 +99,7 @@ artifact metadata, and never mix.
 ## 5. Where segmentation fits in a sklearn -> torch pipeline
 
 ```text
-raw text (UIT-VSFC sentences.txt)
+text from an effective split of the selected local adapter
    |
    v
 [shared] vfi.data.loading.normalize_text        NFC + whitespace collapse   (Phase 1 code, reused)
@@ -122,9 +122,9 @@ Design points:
   equivalent of "pipeline can't drift" is: **persist segmented texts or the segmenter identity
   (tool + version + model dir fingerprint) in the artifact sidecar** (`meta.json` equivalent),
   so any prediction run can prove it used the same preprocessing. [DESIGN RECOMMENDATION]
-- **Segment once, cache.** For UIT-VSFC-scale data (~16k short sentences per split [ESTIMATE —
-  count UNVERIFIED]), segmenting the whole split up front is cheap; JVM startup cost is amortized
-  by batch segmentation.
+- **Segment once, cache locally.** Batch train and validation within their own
+  partitions. Segment test only at final scoring after the model is locked.
+  Measure runtime on the selected data and keep caches out of Git.
 - **Label mapping stays exactly as Phase 1** — canonical `negative=0, neutral=1, positive=2`,
   remapped once at load time. The HF classifier head is trained against the canonical ids.
   [VERIFIED FACT for Phase 1; direct reuse — DESIGN RECOMMENDATION]
