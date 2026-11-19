@@ -55,7 +55,8 @@ REPORT_SCHEMA = 2
 
 
 def _print_json(payload: Any) -> None:
-    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    # Redirected Windows stdout may use a code page that cannot encode report paths.
+    print(json.dumps(payload, indent=2))
 
 
 def _fail(message: str, code: int) -> int:

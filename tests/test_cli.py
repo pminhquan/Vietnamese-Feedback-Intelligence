@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import sys
+from io import BytesIO, TextIOWrapper
 from pathlib import Path
 
 import pytest
@@ -48,6 +50,20 @@ class TestPrepareData:
         assert report["leakage"]["cross_split_duplicate_texts"] == 0
         assert "test" not in report["dataset_fingerprints"]
         assert "fingerprint" in report["train"]
+
+    def test_reports_to_legacy_stdout(
+        self, project: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        reports = project["tmp"] / "báo-cáo-tiếng-Việt"
+        write_test_config(project["config"], project["raw"], project["models"], reports)
+        with BytesIO() as output, TextIOWrapper(output, encoding="cp1252") as stdout:
+            with monkeypatch.context() as patch:
+                patch.setattr(sys, "stdout", stdout)
+                assert main(["prepare-data", "--config", str(project["config"])]) == 0
+            stdout.flush()
+            report_path = reports / "data_report.json"
+            assert json.loads(output.getvalue())["report_path"] == str(report_path)
+        assert report_path.is_file()
 
     def test_missing_data_fails_cleanly(self, project: dict[str, Path]) -> None:
         project["raw"].rename(project["tmp"] / "moved_away")

@@ -8,7 +8,8 @@ import json
 import re
 import sys
 from collections import Counter, defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from random import Random
 from tempfile import NamedTemporaryFile, TemporaryDirectory
@@ -125,6 +126,15 @@ def _validated_rows(
     return records
 
 
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise CustomDatasetError("duplicate JSON object key")
+        result[key] = value
+    return result
+
+
 def read_records(path: Path, *, expected_version: str | None = None) -> list[dict[str, Any]]:
     """Read one physical JSONL source and validate its version and annotations."""
     try:
@@ -136,7 +146,9 @@ def read_records(path: Path, *, expected_version: str | None = None) -> list[dic
         if not line.strip():
             continue
         try:
-            rows.append((line_no, json.loads(line)))
+            rows.append((line_no, json.loads(line, object_pairs_hook=_unique_json_object)))
+        except CustomDatasetError as exc:
+            raise CustomDatasetError(f"Line {line_no}: {exc}") from None
         except (ValueError, RecursionError):
             raise CustomDatasetError(f"Line {line_no}: invalid JSON") from None
     return _validated_rows(rows, expected_version)
@@ -165,6 +177,28 @@ def _atomic_write(path: Path, text: str) -> None:
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
+
+
+@contextmanager
+def _store_write_lock(root: Path) -> Iterator[None]:
+    """Serialize local writers on a stable file that is never replaced or removed."""
+    root.mkdir(parents=True, exist_ok=True)
+    with (root / ".dataset.lock").open("a+b") as handle:
+        handle.seek(0)
+        if sys.platform == "win32":
+            import msvcrt
+
+            try:
+                msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            except OSError:
+                raise CustomDatasetError(
+                    "Cannot acquire the dataset write lock. Retry shortly."
+                ) from None
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        yield
 
 
 def make_record(
@@ -244,11 +278,11 @@ class CustomDatasetStore:
         self.manifest_path = self.root / MANIFEST_FILENAME
 
     def initialize(self) -> None:
-        self._check_manifest_version()
-        self.root.mkdir(parents=True, exist_ok=True)
-        if not self.records_path.exists():
-            self.records_path.touch(exist_ok=False)
-        self.write_manifest()
+        with _store_write_lock(self.root):
+            self._check_manifest_version()
+            if not self.records_path.exists():
+                self.records_path.touch(exist_ok=False)
+            self._write_manifest()
 
     def _check_manifest_version(self) -> None:
         if self.manifest_path.exists():
@@ -267,39 +301,52 @@ class CustomDatasetStore:
         return read_records(self.records_path, expected_version=self.dataset_version)
 
     def append_records(self, new_records: list[dict[str, Any]]) -> int:
-        # Validate the complete batch before touching the store.
-        rows = (
-            self.load_records() if self.records_path.exists() or self.manifest_path.exists() else []
-        )
-        validated = _validated_rows(enumerate([*rows, *new_records], 1), self.dataset_version)
-        self.root.mkdir(parents=True, exist_ok=True)
-        _atomic_write(self.records_path, _jsonl(validated))
+        # Validate the complete batch before replacing the records file.
+        with _store_write_lock(self.root):
+            rows = (
+                self.load_records()
+                if self.records_path.exists() or self.manifest_path.exists()
+                else []
+            )
+            validated = _validated_rows(enumerate([*rows, *new_records], 1), self.dataset_version)
+            _atomic_write(self.records_path, _jsonl(validated))
         return len(new_records)
 
-    def _record_for_update(self, record_id: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    def _record_for_update(
+        self, record_id: str, expected_record: dict[str, Any] | None
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         records = self.load_records()
         for record in records:
             if record["record_id"] == record_id:
+                if expected_record is not None and expected_record != record:
+                    raise CustomDatasetError("Record changed during review. Review it again.")
                 return records, record
         raise CustomDatasetError("Unknown record_id")
 
-    def annotate(self, record_id: str, label: str) -> None:
-        records, record = self._record_for_update(record_id)
+    def annotate(
+        self, record_id: str, label: str, *, expected_record: dict[str, Any] | None = None
+    ) -> None:
         if label not in CANONICAL_LABELS:
             raise CustomDatasetError("Choose a canonical sentiment label")
-        record.update(
-            sentiment_label=label,
-            annotation_method=ANNOTATION_METHOD_HUMAN,
-            annotation_status=ANNOTATION_STATUS_ANNOTATED,
-        )
-        _atomic_write(self.records_path, _jsonl(records))
+        with _store_write_lock(self.root):
+            records, record = self._record_for_update(record_id, expected_record)
+            record.update(
+                sentiment_label=label,
+                annotation_method=ANNOTATION_METHOD_HUMAN,
+                annotation_status=ANNOTATION_STATUS_ANNOTATED,
+            )
+            _atomic_write(self.records_path, _jsonl(records))
 
-    def approve(self, record_id: str) -> None:
-        records, record = self._record_for_update(record_id)
-        if record["annotation_method"] != ANNOTATION_METHOD_HUMAN or not record["sentiment_label"]:
-            raise CustomDatasetError("Enter a human annotation before approving the record")
-        record["annotation_status"] = ANNOTATION_STATUS_APPROVED
-        _atomic_write(self.records_path, _jsonl(records))
+    def approve(self, record_id: str, *, expected_record: dict[str, Any] | None = None) -> None:
+        with _store_write_lock(self.root):
+            records, record = self._record_for_update(record_id, expected_record)
+            if (
+                record["annotation_method"] != ANNOTATION_METHOD_HUMAN
+                or not record["sentiment_label"]
+            ):
+                raise CustomDatasetError("Enter a human annotation before approving the record")
+            record["annotation_status"] = ANNOTATION_STATUS_APPROVED
+            _atomic_write(self.records_path, _jsonl(records))
 
     def dataset_summary(self) -> dict[str, Any]:
         records = self.load_records()
@@ -333,6 +380,10 @@ class CustomDatasetStore:
         }
 
     def write_manifest(self) -> Path:
+        with _store_write_lock(self.root):
+            return self._write_manifest()
+
+    def _write_manifest(self) -> Path:
         _atomic_write(self.manifest_path, json.dumps(self.dataset_summary(), indent=2) + "\n")
         return self.manifest_path
 
@@ -454,11 +505,11 @@ def _review_record(store: CustomDatasetStore, args: argparse.Namespace) -> str:
         label = _read_local_prompt("Enter negative, neutral, positive, or blank to skip: ").strip()
         if not label:
             return "skipped"
-        store.annotate(row["record_id"], label)
+        store.annotate(row["record_id"], label, expected_record=row)
         return "annotated"
     if _read_local_prompt("Type approve to confirm the human label: ").strip() != "approve":
         return "skipped"
-    store.approve(row["record_id"])
+    store.approve(row["record_id"], expected_record=row)
     return "approved"
 
 
