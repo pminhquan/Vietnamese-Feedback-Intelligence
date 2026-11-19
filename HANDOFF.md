@@ -44,24 +44,26 @@ vfi predict --text "Giảng viên giải thích rất dễ hiểu"
 1. Build an independent dataset using `vfi dataset` as shown in the README,
    or place an authorized local dataset under an ignored path. Choose its
    adapter, version and access policy using the layout in `data/README.md`.
+   Copy and configure the baseline YAML under an ignored run directory using
+   `$config` as shown in the [README](README.md#select-and-run-an-adapter).
 2. Validate train/validation and record a clean preflight before training:
 
    ```powershell
-   vfi prepare-data --config configs\baseline.yaml
-   vfi evaluate --preflight-only --config configs\baseline.yaml
+   vfi prepare-data --config $config
+   vfi evaluate --preflight-only --config $config
    ```
 
 3. Train + select on validation:
 
    ```powershell
-   vfi train --config configs\baseline.yaml
+   vfi train --config $config
    ```
 
 4. Only after finalizing selection, evaluate on test:
 
    ```powershell
-   vfi evaluate --model-id tfidf-logreg --config configs\baseline.yaml
-   vfi evaluate --model-id majority --config configs\baseline.yaml
+   vfi evaluate --model-id tfidf-logreg --config $config
+   vfi evaluate --model-id majority --config $config
    ```
 
 5. Write the milestone Markdown report in `reports/` from the JSON artifacts

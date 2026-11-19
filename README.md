@@ -85,23 +85,31 @@ stay marked synthetic after review. The explicit fixture mode is for smoke tests
 
 ## Select and run an adapter
 
-Set `raw_dir`, `dataset_adapter`, `dataset_id`, and `dataset_version` in the
-`data` section of [`configs/baseline.yaml`](configs/baseline.yaml). Set
-`rights_confirmed: true` when that dataset is authorized. Use separate files for
-train, validation and test. See [file layouts and label policies](data/README.md).
+Copy the [baseline template](configs/baseline.yaml) into a new ignored run directory:
+
+```powershell
+$run = "reports/artifacts/local-baselines"
+New-Item -ItemType Directory $run -ErrorAction Stop | Out-Null
+$config = "$run/config.yaml"
+Copy-Item configs/baseline.yaml $config
+```
+
+In the copy, set `raw_dir`, `dataset_adapter`, `dataset_id`, and `dataset_version`
+under `data`. Set `rights_confirmed: true` when that dataset is authorized. Use
+separate files for train, validation and test. See [file layouts and label policies](data/README.md).
 False `use_official_splits` derives validation from the physical train source.
 A test benchmark requires an independently declared holdout.
 
 ```powershell
 # Summarize train/validation and check all split pairs before fitting
-vfi prepare-data --config configs\baseline.yaml
-vfi evaluate --preflight-only --config configs\baseline.yaml
+vfi prepare-data --config $config
+vfi evaluate --preflight-only --config $config
 
 # Train baselines (fit on train, select on validation; test untouched)
-vfi train --config configs\baseline.yaml
+vfi train --config $config
 
 # Evaluate a trained artifact after finalizing validation-only selection
-vfi evaluate --model-id tfidf-logreg --config configs\baseline.yaml
+vfi evaluate --model-id tfidf-logreg --config $config
 
 # Single-text prediction from a locally trained artifact
 vfi predict --text "Giảng viên giải thích rất dễ hiểu"
