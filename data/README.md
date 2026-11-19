@@ -29,6 +29,12 @@ Custom exports contain `record_id`, `text`, `sentiment_label`, `source_type`,
 separate fixture run with `synthetic_fixture: true`; do not set this flag for
 real records. Use versioned paths and preserve a frozen holdout.
 
+Use a non-sensitive local provenance reference to link each real record to
+its origin and consent or permission evidence. The CLI checks that this
+reference is present. Review and confirm the underlying permission separately.
+Dataset writes are serialized for each local store. If a record changes while
+you review it, reopen it and confirm the current label.
+
 ## UIT-VSFC layout (after the owner obtains access)
 
 ```text

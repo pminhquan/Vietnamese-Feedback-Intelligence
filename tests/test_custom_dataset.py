@@ -5,11 +5,14 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 
 import pytest
 import yaml
 
+from vfi import custom_dataset
 from vfi.cli import main
 from vfi.custom_dataset import (
     CustomDatasetError,
@@ -54,6 +57,40 @@ def test_append_validates_entire_batch_without_leaking_id(tmp_path: Path) -> Non
     assert store.records_path.read_bytes() == before
 
 
+def test_overlapping_appends_preserve_both_batches(tmp_path: Path, monkeypatch) -> None:
+    store = CustomDatasetStore(tmp_path, VERSION)
+    store.initialize()
+    first = generate_synthetic_draft(1, dataset_version=VERSION, run_id="first")
+    second = generate_synthetic_draft(1, dataset_version=VERSION, run_id="second")
+    first_writing = Event()
+    second_started = Event()
+    second_writing = Event()
+    write = custom_dataset._atomic_write
+
+    def overlap(path: Path, text: str) -> None:
+        if first[0]["record_id"] in text and second[0]["record_id"] not in text:
+            first_writing.set()
+            assert second_started.wait(5)
+            # An unlocked second writer can publish while the first holds stale rows.
+            second_writing.wait(1)
+            write(path, text)
+        else:
+            write(path, text)
+            second_writing.set()
+
+    def append_second() -> int:
+        second_started.set()
+        return CustomDatasetStore(tmp_path, VERSION).append_records(second)
+
+    monkeypatch.setattr(custom_dataset, "_atomic_write", overlap)
+    with ThreadPoolExecutor(max_workers=2) as writers:
+        first_result = writers.submit(store.append_records, first)
+        assert first_writing.wait(5)
+        second_result = writers.submit(append_second)
+        assert first_result.result(timeout=15) == second_result.result(timeout=15) == 3
+    assert store.load_records() == [*first, *second]
+
+
 def test_validate_jsonl_version_and_machine_approval(tmp_path: Path) -> None:
     row = generate_synthetic_draft(1, dataset_version=VERSION, run_id="TEST-FIXTURE")[0]
     path = tmp_path / "fixture.jsonl"
@@ -64,6 +101,16 @@ def test_validate_jsonl_version_and_machine_approval(tmp_path: Path) -> None:
     with pytest.raises(CustomDatasetError, match="dataset_version"):
         read_records(path, expected_version="fixture-v2")
     assert read_records(path) == [row]
+
+
+def test_duplicate_json_keys_cannot_override_provenance(tmp_path: Path) -> None:
+    row = generate_synthetic_draft(1, dataset_version=VERSION, run_id="fixture")[0]
+    path = tmp_path / "records.jsonl"
+    contents = json.dumps(row)[:-1] + ', "source_type": "owner_collected"}\n'
+    path.write_text(contents, encoding="utf-8")
+    with pytest.raises(CustomDatasetError, match="Line 1: duplicate JSON object key") as caught:
+        read_records(path)
+    assert "source_type" not in str(caught.value)
 
 
 @pytest.mark.parametrize(
@@ -226,6 +273,37 @@ def test_cli_entry_and_review_require_local_interactive_terminal(
     capsys.readouterr()
     assert run("report") == 0
     assert MARKER not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(("command", "response"), [("approve", "approve"), ("annotate", "neutral")])
+def test_interactive_review_rejects_a_changed_record(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    command: str,
+    response: str,
+) -> None:
+    store = CustomDatasetStore(tmp_path, VERSION)
+    store.initialize()
+    row = generate_synthetic_draft(1, dataset_version=VERSION, run_id="fixture")[0]
+    record_id = row["record_id"]
+    store.append_records([row])
+    store.annotate(record_id, "negative")
+
+    def change_before_confirmation(_prompt: str) -> str:
+        CustomDatasetStore(tmp_path, VERSION).annotate(record_id, "positive")
+        return response
+
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", change_before_confirmation)
+    args = ["dataset", command, "--root", str(tmp_path), "--dataset-version", VERSION]
+    assert main([*args, "--record-id", record_id]) == 1
+    captured = capsys.readouterr()
+    assert "Current label: negative" in captured.out
+    assert "Record changed during review" in captured.err
+    current = store.load_records()[0]
+    assert (current["sentiment_label"], current["annotation_status"]) == ("positive", "annotated")
 
 
 def test_custom_synthetic_fixture_end_to_end(

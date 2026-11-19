@@ -18,8 +18,9 @@ This repository currently targets **Phase 1** only:
 - A minimal local inference CLI.
 - Focused tests and CI.
 
-Deep-learning models (PhoBERT), API serving, and dashboards are explicitly
-**out of scope** for Phase 1 and will be introduced in later phases.
+Phase 2 research and readiness tools are available in `docs/phase2/` and
+`tools/phase2_readiness/`. PhoBERT fine-tuning, API serving, and dashboards
+are planned for later phases.
 
 ## Dataset choices
 
@@ -48,6 +49,16 @@ pip install -e ".[dev]"
 python scripts\verify.py
 ```
 
+Run the synthetic dataset-to-prediction smoke test after installation:
+
+```powershell
+python -m pytest -v tests/test_custom_dataset.py::test_custom_synthetic_fixture_end_to_end
+```
+
+The test generates drafts, simulates review in a temporary store, exports
+synthetic splits, checks preflight before fitting, trains both baselines and
+exercises scoring and prediction. Fixture metrics demonstrate pipeline execution.
+
 ## Build an independent dataset
 
 Collect feedback you have permission to use. Remove unnecessary personal
@@ -74,23 +85,31 @@ stay marked synthetic after review. The explicit fixture mode is for smoke tests
 
 ## Select and run an adapter
 
-Set `raw_dir`, `dataset_adapter`, `dataset_id`, and `dataset_version` in the
-`data` section of [`configs/baseline.yaml`](configs/baseline.yaml). Set
-`rights_confirmed: true` when that dataset is authorized. Use separate files for
-train, validation and test. See [file layouts and label policies](data/README.md).
+Copy the [baseline template](configs/baseline.yaml) into a new ignored run directory:
+
+```powershell
+$run = "reports/artifacts/local-baselines"
+New-Item -ItemType Directory $run -ErrorAction Stop | Out-Null
+$config = "$run/config.yaml"
+Copy-Item configs/baseline.yaml $config
+```
+
+In the copy, set `raw_dir`, `dataset_adapter`, `dataset_id`, and `dataset_version`
+under `data`. Set `rights_confirmed: true` when that dataset is authorized. Use
+separate files for train, validation and test. See [file layouts and label policies](data/README.md).
 False `use_official_splits` derives validation from the physical train source.
 A test benchmark requires an independently declared holdout.
 
 ```powershell
 # Summarize train/validation and check all split pairs before fitting
-vfi prepare-data --config configs\baseline.yaml
-vfi evaluate --preflight-only --config configs\baseline.yaml
+vfi prepare-data --config $config
+vfi evaluate --preflight-only --config $config
 
 # Train baselines (fit on train, select on validation; test untouched)
-vfi train --config configs\baseline.yaml
+vfi train --config $config
 
 # Evaluate a trained artifact after finalizing validation-only selection
-vfi evaluate --model-id tfidf-logreg --config configs\baseline.yaml
+vfi evaluate --model-id tfidf-logreg --config $config
 
 # Single-text prediction from a locally trained artifact
 vfi predict --text "Giảng viên giải thích rất dễ hiểu"
@@ -109,7 +128,8 @@ explains split checks, provenance and model loading.
 | [`docs/project-spec.md`](docs/project-spec.md) | Scope, architecture, acceptance criteria |
 | [`docs/experiment-protocol.md`](docs/experiment-protocol.md) | Split discipline, metrics, latency protocol, reproducibility |
 | [`docs/dataset-uit-vsfc.md`](docs/dataset-uit-vsfc.md) | Dataset investigation, license findings, unblocking steps |
-| [`docs/roadmap.md`](docs/roadmap.md) | Phase 1-4 plan (Phase 2+ not started) |
+| [`docs/roadmap.md`](docs/roadmap.md) | Phase 1-4 plan and implementation status |
+| [`docs/experiments/first-real-data-baselines.md`](docs/experiments/first-real-data-baselines.md) | Authorization, preflight, and first real-data baseline protocol |
 | [`docs/learning-notes.md`](docs/learning-notes.md) | Owner learning notes in Vietnamese + exercises |
 | [`HANDOFF.md`](HANDOFF.md) | Reproduction instructions for developers |
 | [`AGENTS.md`](AGENTS.md) | Ground rules for AI assistants |

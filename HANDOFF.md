@@ -1,21 +1,19 @@
 # HANDOFF — Reproducing and continuing VFI Phase 1
 
-Last updated: 2026-11-14 (Phase 1 on branch `phase1/classical-ml-baselines`).
-
 ## Current state
 
-- `main` contains only the bootstrap commit (metadata, README, .gitignore,
-  pyproject).
-- Phase 1 work lives on `phase1/classical-ml-baselines` behind a Draft PR.
-- The integration branch adds local dataset adapters and a human annotation
-  workflow. Real experiments require an authorized labeled source with a
-  defensible holdout. UIT-VSFC is optional and requires a signed agreement
-  and confirmed label mapping. Tests use synthetic fixtures.
+- `main` contains the Phase 1 CLI, local dataset adapters, human review
+  workflow, and classical baselines. Tests use synthetic fixtures.
+- Real experiments require an authorized labeled source with a defensible
+  holdout. UIT-VSFC is optional and requires a signed agreement and confirmed
+  label mapping. The [first real-data runbook](docs/experiments/first-real-data-baselines.md)
+  records the remaining prerequisites.
 
 ## One-time setup (Windows PowerShell)
 
 ```powershell
-cd "D:\project-personal\Vietnamese Feedback Intelligence"
+git clone https://github.com/pminhquan/Vietnamese-Feedback-Intelligence.git
+cd Vietnamese-Feedback-Intelligence
 py -3.12 -m venv .venv
 .venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
@@ -46,24 +44,26 @@ vfi predict --text "Giảng viên giải thích rất dễ hiểu"
 1. Build an independent dataset using `vfi dataset` as shown in the README,
    or place an authorized local dataset under an ignored path. Choose its
    adapter, version and access policy using the layout in `data/README.md`.
+   Copy and configure the baseline YAML under an ignored run directory using
+   `$config` as shown in the [README](README.md#select-and-run-an-adapter).
 2. Validate train/validation and record a clean preflight before training:
 
    ```powershell
-   vfi prepare-data --config configs\baseline.yaml
-   vfi evaluate --preflight-only --config configs\baseline.yaml
+   vfi prepare-data --config $config
+   vfi evaluate --preflight-only --config $config
    ```
 
 3. Train + select on validation:
 
    ```powershell
-   vfi train --config configs\baseline.yaml
+   vfi train --config $config
    ```
 
 4. Only after finalizing selection, evaluate on test:
 
    ```powershell
-   vfi evaluate --model-id tfidf-logreg --config configs\baseline.yaml
-   vfi evaluate --model-id majority --config configs\baseline.yaml
+   vfi evaluate --model-id tfidf-logreg --config $config
+   vfi evaluate --model-id majority --config $config
    ```
 
 5. Write the milestone Markdown report in `reports/` from the JSON artifacts
